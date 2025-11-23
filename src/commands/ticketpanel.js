@@ -1,0 +1,69 @@
+import { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, PermissionFlagsBits } from 'discord.js';
+import config from '../utils/config.js';
+
+export default {
+  name: 'ticketpanel',
+  description: 'Sends the ticket panel',
+  async execute(message, args, client) {
+    // Check permissions
+    const hasStaffRole = message.member.roles.cache.has(config.STAFF_ROLE_ID);
+    const isAdmin = message.member.permissions.has(PermissionFlagsBits.Administrator);
+
+    if (!hasStaffRole && !isAdmin) {
+      return message.reply({ content: 'You do not have permission to use this command.', ephemeral: true });
+    }
+
+    const embed = new EmbedBuilder()
+      .setTitle('Create a ticket')
+      .setDescription(config.TICKET_DESCRIPTION)
+      .setThumbnail(message.guild.iconURL())
+      .setColor('#0099ff')
+      .addFields(
+        { name: '🆘 Support', value: 'Click for general support.', inline: true },
+        { name: '🛠️ Technical', value: 'Click for technical issues.', inline: true },
+        { name: '🤝 Partnership', value: 'Click for partnership inquiries.', inline: true },
+        { name: '❓ Other', value: 'Click for other inquiries.', inline: true }
+      )
+      .setFooter({ text: '© ShotDevs' });
+
+    const row = new ActionRowBuilder()
+      .addComponents(
+        new ButtonBuilder()
+          .setCustomId('create_ticket_support')
+          .setLabel('Support')
+          .setEmoji('🆘')
+          .setStyle(ButtonStyle.Primary),
+        new ButtonBuilder()
+          .setCustomId('create_ticket_technical')
+          .setLabel('Technical')
+          .setEmoji('🛠️')
+          .setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder()
+          .setCustomId('create_ticket_partnership')
+          .setLabel('Partnership')
+          .setEmoji('🤝')
+          .setStyle(ButtonStyle.Success),
+        new ButtonBuilder()
+          .setCustomId('create_ticket_other')
+          .setLabel('Other')
+          .setEmoji('❓')
+          .setStyle(ButtonStyle.Secondary),
+      );
+
+    const channelId = config.TICKET_PANEL_CHANNEL_ID || message.channel.id;
+    const channel = client.channels.cache.get(channelId);
+
+    if (!channel) {
+      return message.reply(`Could not find the ticket panel channel (${channelId}).`);
+    }
+
+    await channel.send({ embeds: [embed], components: [row] });
+    if (channelId !== message.channel.id) {
+      await message.reply(`Ticket panel sent to <#${channelId}>.`);
+    } else {
+      // If sent in the same channel, maybe delete the command message?
+      // The prompt doesn't specify, but it's cleaner.
+      try { await message.delete(); } catch (e) {}
+    }
+  },
+};
