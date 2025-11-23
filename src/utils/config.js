@@ -29,6 +29,10 @@ const config = {
   // Echo System
   ECHO_ENABLED: process.env.ECHO_ENABLED === 'true',
   ECHO_CHANNEL_ID: process.env.ECHO_CHANNEL_ID,
+
+  // Welcome System 
+  WELCOME_ENABLED: process.env.WELCOME_ENABLED === 'true',
+  WELCOME_CHANNEL_ID: process.env.WELCOME_CHANNEL_ID,
 };
 
 export function validateConfig() {
