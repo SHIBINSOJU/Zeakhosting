@@ -10,7 +10,7 @@ export default {
     const isAdmin = message.member.permissions.has(PermissionFlagsBits.Administrator);
 
     if (!hasStaffRole && !isAdmin) {
-      return message.reply({ content: 'You do not have permission to use this command.', ephemeral: true });
+      return message.reply({ content: 'You do not have permission to use this command.' });
     }
 
     const embed = new EmbedBuilder()
@@ -21,12 +21,6 @@ export default {
       )
       .setThumbnail(message.guild.iconURL())
       .setColor('#FF0000')
-      .addFields(
-        { name: '🆘 Support', value: 'Click for general support.', inline: true },
-        { name: '🛠️ Technical', value: 'Click for technical issues.', inline: true },
-        { name: '🤝 Partnership', value: 'Click for partnership inquiries.', inline: true },
-        { name: '❓ Other', value: 'Click for other inquiries.', inline: true },
-      )
       .setFooter({ text: '© ShotDevs' });
 
     const row = new ActionRowBuilder()
