@@ -32,13 +32,31 @@ export default {
           .setCustomId(`ticket_modal_${categoryType}`)
           .setTitle('Create a ticket');
 
+        // Default label & placeholder
+        let label = 'Describe your issue';
+        let placeholder =
+          'Example: My server is offline / I need help with billing / etc.';
+
+        // Special text for PARTNERSHIP tickets
+        if (categoryType === 'partnership') {
+          label = 'Provide your partnership details';
+          placeholder =
+            'Community link:\n' +
+            'Discord: https://discord.gg/yourserver\n\n' +
+            'Community type:\n' +
+            '(e.g. Minecraft hosting, survival SMP, gaming, tech, etc.)\n\n' +
+            'Member stats:\n' +
+            'Total members:\n' +
+            'Average online:\n';
+        }
+
         const reasonInput = new TextInputBuilder()
           .setCustomId('ticket_reason')
-          .setLabel('Describe your issue')
+          .setLabel(label)
           .setStyle(TextInputStyle.Paragraph)
           .setRequired(true)
           .setMaxLength(1000)
-          .setPlaceholder('Example: My server is offline / I need help with billing / etc.');
+          .setPlaceholder(placeholder);
 
         const row = new ActionRowBuilder().addComponents(reasonInput);
         modal.addComponents(row);
