@@ -1,87 +1,104 @@
-# ShotDevs Discord Bot
+# ShotBot – Tickets + Counting + Echo Discord Bot
 
-A complete, production-ready Discord bot featuring a Ticket System and a Counting System.
+ShotBot is a Discord bot that provides:
+
+- 🎫 **Ticket system** with 4 category buttons and per-category Discord channel categories  
+- 🔢 **Counting system** with MongoDB, validation, and anti-double-counting  
+- 🔁 **Echo system** that repeats messages like `shibin is top`  
+
+---
 
 ## Features
 
-### Ticket System
-- Multi-category support (Support, Issues, Partnership, Other).
-- Persistent ticket panel.
-- Ticket management: Claim, Close, Transcript, Lock/Unlock.
-- Transcripts saved to log channel and DM'd to user.
-- Configurable categories and staff roles.
+### 1. Ticket System
 
-### Counting System
-- Strict counting validation (1, 2, 3...).
-- Atomic database updates to prevent race conditions.
-- Leaderboard tracking (streak, top counters).
-- Admin controls (Reset, Set).
+- Ticket panel in a dedicated ticket channel.
+- 4 buttons:
+  - 🆘 **Support**
+  - 🛠️ **Technical**
+  - 🤝 **Partnership**
+  - ❓ **Other**
+- Each button creates a ticket channel under a specific **Discord category**:
+  - Support → `TICKET_CATEGORY_SUPPORT_ID`
+  - Technical → `TICKET_CATEGORY_TECHNICAL_ID`
+  - Partnership → `TICKET_CATEGORY_PARTNERSHIP_ID`
+  - Other → `TICKET_CATEGORY_OTHER_ID`
+- Ticket embed uses **server icon as thumbnail**.
+- Inside each ticket:
+  - **Claim** button → staff member claims the ticket.
+  - **Close** button → closes ticket, generates transcript.
+- On close:
+  - Transcript/log is sent to a **log channel** (`TICKET_LOG_CHANNEL_ID`).
+  - Ticket creator gets a **DM** with logs/transcript (if possible).
+  - Ticket channel is locked for the user and can optionally be deleted later.
 
-## Prerequisites
+### 2. Counting System
 
-- Node.js v18+
-- MongoDB (running locally or cloud)
-- A Discord Bot Token
+- Runs in one channel set by `COUNTING_CHANNEL_ID`.
+- People count `1, 2, 3, 4, ...` in order.
+- MongoDB stores:
+  - `currentNumber` (next expected number)
+  - `lastUserId` (who last counted correctly)
+- Rules:
+  - If the number is correct:
+    - Bot reacts with ✅
+    - Updates `currentNumber` and `lastUserId`
+  - If the number is wrong:
+    - Bot replies with an **ephemeral-style** message explaining the correct next number.
+    - Deletes the wrong message.
+  - **One message per user in a row**:
+    - If the same user tries to count twice in a row:
+      - Bot warns them (ephemeral-style).
+      - Deletes the message.
+      - Count does not progress.
 
-## Installation
+### 3. Echo System
 
-1. **Clone the repository**
-   ```bash
-   git clone <repo_url>
-   cd shotdevs-bot
-   ```
+- Controlled by:
+  - `ECHO_ENABLED`
+  - `ECHO_CHANNEL_ID` (optional)
+- When enabled, in the echo channel:
+  - User: `shibin is top`  
+  - Bot: `shibin is top`
+- The bot repeats the **exact same content**, no extra text.
 
-2. **Install dependencies**
-   ```bash
-   npm install
-   ```
-
-3. **Configure Environment**
-   Copy `.env.example` to `.env` and fill in your details:
-   ```env
-   TOKEN=your_bot_token
-   MONGO_URI=mongodb://localhost:27017/shotdevs_bot
-   CLIENT_ID=your_client_id
-   GUILD_ID=optional_guild_id_for_instant_deploy
-   ```
-
-4. **Deploy Commands**
-   Run this once to register slash commands:
-   ```bash
-   npm run deploy
-   ```
-
-5. **Start the Bot**
-   ```bash
-   npm start
-   ```
-
-## Setup Guide
-
-### 1. Ticket System Setup
-1. Create categories for your tickets (e.g., "Support Tickets", "Partnerships").
-2. Create a log channel for transcripts (e.g., #ticket-logs).
-3. Create a staff role.
-4. Run `/ticket-setup`:
-   - `/ticket-setup type:support category:#SupportTickets log_channel:#ticket-logs staff_role:@Staff`
-   - Repeat for other types (Issues, Partnership, Other).
-5. Post the ticket panel:
-   - `/ticket-post channel:#open-a-ticket`
-
-### 2. Counting System Setup
-1. Create a channel for counting (e.g., #counting).
-2. Run `/count-setup add channel:#counting`.
-3. Start counting from 1!
-4. If needed, admins can use `/count set number:100` or `/count reset`.
+---
 
 ## Project Structure
 
-- `src/commands`: Slash command definitions.
-- `src/events`: Event handlers (interaction, message).
-- `src/models`: Mongoose schemas (GuildConfig, Ticket, Counting).
-- `src/services`: Business logic (Ticket creation, Counting validation).
-- `src/utils`: Helpers (Logger, Embeds).
+Suggested Node.js/discord.js + MongoDB structure:
 
-## License
-
-© ShotDevs
+```bash
+project-root/
+├─ src/
+│  ├─ index.js                # Bot entry point
+│  ├─ config/
+│  │  └─ env.js               # Loads and validates environment variables
+│  ├─ database/
+│  │  ├─ mongo.js             # MongoDB connection
+│  │  ├─ models/
+│  │  │  ├─ Ticket.js         # Ticket schema/model
+│  │  │  └─ CountingState.js  # Counting state model
+│  ├─ features/
+│  │  ├─ tickets/
+│  │  │  ├─ ticketPanel.js    # Sends the ticket panel with 4 buttons
+│  │  │  ├─ ticketCreate.js   # Handles button clicks to create tickets
+│  │  │  ├─ ticketActions.js  # Claim / Close / transcript logic
+│  │  ├─ counting/
+│  │  │  ├─ countingHandler.js # Handles counting channel messages
+│  │  ├─ echo/
+│  │  │  └─ echoHandler.js    # Echo system logic
+│  ├─ commands/
+│  │  ├─ ticketpanel.js       # Command to post the ticket panel
+│  │  └─ resetcount.js        # Optional command to reset counting
+│  ├─ utils/
+│  │  ├─ logger.js            # Logging helper
+│  │  └─ transcript.js        # Utility to generate ticket transcripts
+│  └─ events/
+│     ├─ ready.js             # Bot ready event
+│     ├─ interactionCreate.js # Button interactions (tickets)
+│     └─ messageCreate.js     # Counting + echo
+├─ .env                       # Your real env values (not committed)
+├─ .env.example               # Example env model
+├─ package.json
+└─ README.md
