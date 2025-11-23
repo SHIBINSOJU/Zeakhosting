@@ -1,86 +1,114 @@
-import { Events } from 'discord.js';
+import { Events, PermissionFlagsBits } from 'discord.js';
 import config from '../utils/config.js';
 import Counter from '../models/Counter.js';
 
 export default {
   name: Events.MessageCreate,
   async execute(message, client) {
+    // Ignore bots
     if (message.author.bot) return;
+    if (!message.guild) return; // ignore DMs
 
-    // --- ECHO SYSTEM ---
-    if (config.ECHO_ENABLED) {
-        const shouldEcho = !config.ECHO_CHANNEL_ID || message.channel.id === config.ECHO_CHANNEL_ID;
-        const isCommand = message.content.startsWith(config.PREFIX);
+    // =========================
+    // STAFF-ONLY SAY / ECHO (server-wide)
+    // =========================
 
-        if (shouldEcho && !isCommand) {
-            try {
-                await message.reply({ content: message.content });
-            } catch (e) {
-                console.error("Failed to echo message:", e);
-            }
-            // If echo is handled, we might want to stop processing other logic?
-            // The prompt implies echo is a separate system.
-            // However, if the message is also in the counting channel, we have a conflict?
-            // Usually counting channel is dedicated. Let's assume they are distinct or echo doesn't apply to numbers if logic forbids.
-            // But the prompt says "Reply by sending back the exact same content... No extra text".
-            // If the counting channel *is* the echo channel, that would be chaos.
-            // I'll assume they are configured separately or the user accepts the chaos.
-        }
+    // Echo enabled flag (optional, from env)
+    const echoEnabled =
+      config.ECHO_ENABLED === undefined ||
+      config.ECHO_ENABLED === true ||
+      config.ECHO_ENABLED === 'true';
+
+    if (echoEnabled && message.content.toLowerCase().startsWith('say ')) {
+      // Staff-only: must have STAFF_ROLE_ID or be admin
+      const hasStaffRole =
+        config.STAFF_ROLE_ID &&
+        message.member?.roles.cache.has(config.STAFF_ROLE_ID);
+
+      const isAdmin = message.member?.permissions.has(
+        PermissionFlagsBits.Administrator
+      );
+
+      if (!hasStaffRole && !isAdmin) {
+        // Not staff/admin → just ignore
+        return;
+      }
+
+      // Text after "say "
+      const text = message.content.slice(4).trim();
+      if (!text.length) return;
+
+      // Send echoed message
+      await message.channel.send(text);
+
+      // Delete original "say ..." message for clean look
+      try {
+        await message.delete();
+      } catch (e) {
+        // ignore if no permission
+      }
+
+      // Stop here so counting / commands don't also process it
+      return;
     }
 
-    // --- COUNTING SYSTEM ---
+    // =========================
+    // COUNTING SYSTEM
+    // =========================
     if (message.channel.id === config.COUNTING_CHANNEL_ID) {
-        const inputNumber = parseInt(message.content, 10);
+      const inputNumber = parseInt(message.content, 10);
 
-        // 2) Parse parsing
-        if (isNaN(inputNumber) || String(inputNumber) !== message.content.trim()) {
-            // "If it is not a valid integer, treat as wrong and handle accordingly."
-            // Usually strict counting bots delete non-numbers or chat.
-            // "Respond... Delete their message... Do NOT update currentNumber."
-            // The prompt says "If it is not a valid integer, treat as wrong".
-            // I will treat it as wrong number logic but tailored for NaN.
-            await handleWrongCount(message, `That doesn't look like a valid number!`);
-            return;
-        }
+      // invalid number
+      if (isNaN(inputNumber) || String(inputNumber) !== message.content.trim()) {
+        await handleWrongCount(message, `That doesn't look like a valid number!`);
+        return;
+      }
 
-        // Fetch DB State
-        let counter = await Counter.findOne({ guildId: message.guild.id });
+      // Fetch DB state
+      let counter = await Counter.findOne({ guildId: message.guild.id });
 
-        // INITIALIZATION if missing
-        if (!counter) {
-            counter = new Counter({
-                guildId: message.guild.id,
-                channelId: message.channel.id,
-                currentNumber: config.COUNTING_START_NUMBER,
-                lastUserId: null
-            });
-            await counter.save();
-        }
+      // Init if missing
+      if (!counter) {
+        counter = new Counter({
+          guildId: message.guild.id,
+          channelId: message.channel.id,
+          currentNumber: config.COUNTING_START_NUMBER,
+          lastUserId: null,
+        });
+        await counter.save();
+      }
 
-        // 3) Check "one message in a row"
-        if (counter.lastUserId === message.author.id) {
-            await handleOneUserRow(message);
-            return;
-        }
+      // One message in a row rule
+      if (counter.lastUserId === message.author.id) {
+        await handleOneUserRow(message);
+        return;
+      }
 
-        // 4) Check number correctness
-        if (inputNumber === counter.currentNumber) {
-            // Correct
-            await message.react('✅');
-            counter.currentNumber += 1;
-            counter.lastUserId = message.author.id;
-            await counter.save();
-        } else {
-            // Wrong
-            await handleWrongCount(message, `Wrong number! The next correct number is ${counter.currentNumber}.`);
-        }
-        return; // Don't process commands in counting channel? usually safe to return.
+      // Correct number
+      if (inputNumber === counter.currentNumber) {
+        await message.react('✅');
+        counter.currentNumber += 1;
+        counter.lastUserId = message.author.id;
+        await counter.save();
+      } else {
+        // Wrong number
+        await handleWrongCount(
+          message,
+          `Wrong number! The next correct number is ${counter.currentNumber}.`
+        );
+      }
+
+      // Don’t process commands in counting channel
+      return;
     }
 
-    // --- COMMAND HANDLER ---
+    // =========================
+    // COMMAND HANDLER
+    // =========================
     if (message.content.startsWith(config.PREFIX)) {
       const args = message.content.slice(config.PREFIX.length).trim().split(/ +/);
-      const commandName = args.shift().toLowerCase();
+      const commandName = args.shift()?.toLowerCase();
+      if (!commandName) return;
 
       const command = client.commands.get(commandName);
       if (command) {
@@ -88,7 +116,9 @@ export default {
           await command.execute(message, args, client);
         } catch (error) {
           console.error(error);
-          await message.reply({ content: 'There was an error while executing this command!', ephemeral: true });
+          await message.reply({
+            content: 'There was an error while executing this command!',
+          });
         }
       }
     }
@@ -97,26 +127,28 @@ export default {
 
 // Helper for Wrong Count
 async function handleWrongCount(message, text) {
-    try {
-        const reply = await message.reply({ content: text }); // "Simulate ephemerals"
-        await message.delete();
-        setTimeout(() => {
-            reply.delete().catch(() => {});
-        }, 3000); // "short delay"
-    } catch (e) {
-        console.error("Failed to handle wrong count:", e);
-    }
+  try {
+    const reply = await message.reply({ content: text });
+    await message.delete();
+    setTimeout(() => {
+      reply.delete().catch(() => {});
+    }, 3000);
+  } catch (e) {
+    console.error('Failed to handle wrong count:', e);
+  }
 }
 
 // Helper for One User Row
 async function handleOneUserRow(message) {
-    try {
-        const reply = await message.reply({ content: "You can't count twice in a row. Wait for someone else." });
-        await message.delete();
-        setTimeout(() => {
-            reply.delete().catch(() => {});
-        }, 3000);
-    } catch (e) {
-        console.error("Failed to handle one user row:", e);
-    }
+  try {
+    const reply = await message.reply({
+      content: "You can't count twice in a row. Wait for someone else.",
+    });
+    await message.delete();
+    setTimeout(() => {
+      reply.delete().catch(() => {});
+    }, 3000);
+  } catch (e) {
+    console.error('Failed to handle one user row:', e);
+  }
 }
