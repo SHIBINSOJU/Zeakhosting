@@ -1,3 +1,4 @@
+// src/events/interactionCreate.js
 import {
   Events,
   EmbedBuilder,
@@ -21,13 +22,12 @@ export default {
     // BUTTON INTERACTIONS
     // =========================
     if (interaction.isButton()) {
-      const { customId, guild, user, member } = interaction;
+      const { customId, guild, user, member, channel } = interaction;
 
-      // ---------- CREATE TICKET BUTTONS ----------
+      // ---------- CREATE TICKET BUTTONS (open modal) ----------
       if (customId.startsWith('create_ticket_')) {
         const categoryType = customId.replace('create_ticket_', '');
 
-        // Show modal to ask for reason
         const modal = new ModalBuilder()
           .setCustomId(`ticket_modal_${categoryType}`)
           .setTitle('Create a ticket');
@@ -48,13 +48,11 @@ export default {
 
       // ---------- CLAIM TICKET BUTTON ----------
       if (customId === 'ticket_claim') {
-        const { member, channelId, user } = interaction;
-
-        if (!member.roles.cache.has(config.STAFF_ROLE_ID)) {
+        if (!member?.roles.cache.has(config.STAFF_ROLE_ID)) {
           return interaction.reply({ content: 'Only staff can claim tickets.', ephemeral: true });
         }
 
-        const ticket = await Ticket.findOne({ channelId });
+        const ticket = await Ticket.findOne({ channelId: channel.id });
 
         if (!ticket) {
           return interaction.reply({ content: 'Ticket data not found in database.', ephemeral: true });
@@ -75,16 +73,14 @@ export default {
           .setColor('#FFFF00')
           .setFooter({ text: '© ShotDevs' });
 
-        await interaction.channel.send({ embeds: [embed] });
+        await channel.send({ embeds: [embed] });
 
         return interaction.reply({ content: 'You claimed this ticket.', ephemeral: true });
       }
 
       // ---------- CLOSE TICKET BUTTON ----------
       if (customId === 'ticket_close') {
-        const { member, channel, user } = interaction;
-
-        if (!member.roles.cache.has(config.STAFF_ROLE_ID)) {
+        if (!member?.roles.cache.has(config.STAFF_ROLE_ID)) {
           return interaction.reply({ content: 'Only staff can close tickets.', ephemeral: true });
         }
 
@@ -113,6 +109,7 @@ export default {
           { name: `transcript-${channel.name}.txt` }
         );
 
+        // Log to log channel
         const logChannel = client.channels.cache.get(config.TICKET_LOG_CHANNEL_ID);
 
         if (logChannel) {
@@ -132,12 +129,48 @@ export default {
           await logChannel.send({ embeds: [logEmbed], files: [attachment] });
         }
 
+        // DM user with transcript + rating UI
         if (ticket?.creatorId) {
           try {
             const creator = await client.users.fetch(ticket.creatorId);
+
+            const ratingRow = new ActionRowBuilder().addComponents(
+              new ButtonBuilder()
+                .setCustomId(`ticket_rate_1_${channel.id}`)
+                .setLabel('1 ⭐')
+                .setStyle(ButtonStyle.Danger),
+              new ButtonBuilder()
+                .setCustomId(`ticket_rate_2_${channel.id}`)
+                .setLabel('2 ⭐')
+                .setStyle(ButtonStyle.Danger),
+              new ButtonBuilder()
+                .setCustomId(`ticket_rate_3_${channel.id}`)
+                .setLabel('3 ⭐')
+                .setStyle(ButtonStyle.Secondary),
+              new ButtonBuilder()
+                .setCustomId(`ticket_rate_4_${channel.id}`)
+                .setLabel('4 ⭐')
+                .setStyle(ButtonStyle.Success),
+              new ButtonBuilder()
+                .setCustomId(`ticket_rate_5_${channel.id}`)
+                .setLabel('5 ⭐')
+                .setStyle(ButtonStyle.Success),
+            );
+
+            const rateEmbed = new EmbedBuilder()
+              .setTitle('🎫 Ticket Experience')
+              .setDescription(
+                `Your ticket **${channel.name}** has been closed.\n` +
+                'Please rate your experience for this ticket.\n' +
+                'Choose a rating from **1 (Poor)** to **5 (Excellent)** below.'
+              )
+              .setColor('#FF0000')
+              .setFooter({ text: 'ZeakCloud Support System' });
+
             await creator.send({
-              content: `Your ticket ${channel.name} has been closed.\nReason: ${ticket?.reason || 'Not provided'}`,
+              embeds: [rateEmbed],
               files: [attachment],
+              components: [ratingRow],
             });
           } catch {
             console.warn('Could not DM ticket creator.');
@@ -162,6 +195,73 @@ export default {
         setTimeout(() => {
           channel.delete().catch(console.error);
         }, 5000);
+
+        return;
+      }
+
+      // ---------- TICKET RATING BUTTONS ----------
+      if (customId.startsWith('ticket_rate_')) {
+        // customId format: ticket_rate_<score>_<channelId>
+        const parts = customId.split('_'); // ['ticket', 'rate', '<score>', '<channelId>']
+        const score = parseInt(parts[2], 10);
+        const ticketChannelId = parts[3];
+
+        if (isNaN(score) || score < 1 || score > 5) {
+          return interaction.reply({
+            content: 'Invalid rating.',
+            ephemeral: true,
+          });
+        }
+
+        const ticket = await Ticket.findOne({ channelId: ticketChannelId });
+
+        if (!ticket) {
+          return interaction.reply({
+            content: 'Could not find ticket data for this rating.',
+            ephemeral: true,
+          });
+        }
+
+        // Only ticket creator can rate
+        if (interaction.user.id !== ticket.creatorId) {
+          return interaction.reply({
+            content: 'Only the ticket creator can rate this ticket.',
+            ephemeral: true,
+          });
+        }
+
+        // Prevent multiple ratings
+        if (ticket.rating !== null) {
+          return interaction.reply({
+            content: `You already rated this ticket **${ticket.rating}/5**. Thanks!`,
+            ephemeral: true,
+          });
+        }
+
+        ticket.rating = score;
+        ticket.ratedAt = new Date();
+        await ticket.save();
+
+        const logChannel = client.channels.cache.get(config.TICKET_LOG_CHANNEL_ID);
+        if (logChannel) {
+          const logEmbed = new EmbedBuilder()
+            .setTitle('Ticket reviewed')
+            .setDescription(
+              `Ticket channel ID: \`${ticket.channelId}\`\n` +
+              `User: <@${ticket.creatorId}> (${ticket.creatorId})\n` +
+              `Rating: **${score}/5**`
+            )
+            .setColor('#00FF00')
+            .setTimestamp()
+            .setFooter({ text: '© ShotDevs' });
+
+          await logChannel.send({ embeds: [logEmbed] });
+        }
+
+        return interaction.reply({
+          content: `Thanks for your feedback! You rated this ticket **${score}/5** ✅`,
+          ephemeral: true,
+        });
       }
 
       return;
@@ -195,7 +295,7 @@ export default {
 
       const reason = interaction.fields.getTextInputValue('ticket_reason');
 
-      // ✅ Limit: one open ticket per user
+      // Limit: one open ticket per user per guild
       const existingTicket = await Ticket.findOne({
         guildId: guild.id,
         creatorId: user.id,
@@ -295,7 +395,7 @@ export default {
           components: [row],
         });
 
-        // Log ticket creation with reason
+        // Log creation
         const logChannel = client.channels.cache.get(config.TICKET_LOG_CHANNEL_ID);
         if (logChannel) {
           const logEmbed = new EmbedBuilder()
