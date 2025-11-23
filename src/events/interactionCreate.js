@@ -24,7 +24,7 @@ export default {
     if (interaction.isButton()) {
       const { customId, guild, user, member, channel } = interaction;
 
-      // ---------- CREATE TICKET BUTTONS (open modal) ----------
+      // ---------- CREATE TICKET BUTTONS (show modal) ----------
       if (customId.startsWith('create_ticket_')) {
         const categoryType = customId.replace('create_ticket_', '');
 
@@ -32,29 +32,16 @@ export default {
           .setCustomId(`ticket_modal_${categoryType}`)
           .setTitle('Create a ticket');
 
-        // Default label & placeholder
-        let label = 'Describe your issue';
-        let placeholder =
-          'Example: My server is offline / I need help with billing / etc.';
-
-        // Special text for PARTNERSHIP tickets (kept under 100 chars)
-        if (categoryType === 'partnership') {
-          label = 'Partnership details';
-          placeholder =
-            'Community link:\n' +
-            'https://discord.gg/yourserver\n\n' +
-            'Community type:\n' +
-            'Minecraft / Hosting / Other\n\n' +
-            'Members: total + avg online';
-        }
-
+        // One simple reason field for ALL categories
         const reasonInput = new TextInputBuilder()
           .setCustomId('ticket_reason')
-          .setLabel(label)
+          .setLabel('Describe your issue')
           .setStyle(TextInputStyle.Paragraph)
           .setRequired(true)
           .setMaxLength(1000)
-          .setPlaceholder(placeholder);
+          .setPlaceholder(
+            'Example: My server is offline / billing issue / partnership details, etc.'
+          ); // < 100 chars
 
         const row = new ActionRowBuilder().addComponents(reasonInput);
         modal.addComponents(row);
@@ -97,7 +84,10 @@ export default {
 
         await channel.send({ embeds: [embed] });
 
-        return interaction.reply({ content: 'You claimed this ticket.', ephemeral: true });
+        return interaction.reply({
+          content: 'You claimed this ticket.',
+          ephemeral: true,
+        });
       }
 
       // ---------- CLOSE TICKET BUTTON ----------
@@ -125,16 +115,17 @@ export default {
         sortedMessages.forEach(msg => {
           transcriptText += `[${msg.createdAt.toISOString()}] ${msg.author.tag}: ${msg.content}\n`;
           if (msg.attachments.size > 0) {
-            transcriptText += `[Attachments]: ${msg.attachments.map(a => a.url).join(', ')}\n`;
+            transcriptText += `[Attachments]: ${msg.attachments
+              .map(a => a.url)
+              .join(', ')}\n`;
           }
         });
 
         const attachment = new AttachmentBuilder(
           Buffer.from(transcriptText, 'utf-8'),
-          { name: `transcript-${channel.name}.txt` },
+          { name: `transcript-${channel.name}.txt` }
         );
 
-        // Log to log channel
         const logChannel = client.channels.cache.get(config.TICKET_LOG_CHANNEL_ID);
 
         if (logChannel) {
@@ -142,10 +133,10 @@ export default {
             .setTitle('Ticket closed')
             .setDescription(
               `Ticket: ${channel.name}\n` +
-              `Creator: <@${ticket?.creatorId}>\n` +
-              `Closer: ${user}\n` +
-              `Category: ${ticket?.category}\n` +
-              `Reason: ${ticket?.reason || 'Not provided'}`,
+                `Creator: <@${ticket?.creatorId}>\n` +
+                `Closer: ${user}\n` +
+                `Category: ${ticket?.category}\n` +
+                `Reason: ${ticket?.reason || 'Not provided'}`
             )
             .setColor('#FF0000')
             .setTimestamp()
@@ -154,7 +145,7 @@ export default {
           await logChannel.send({ embeds: [logEmbed], files: [attachment] });
         }
 
-        // DM user with transcript + rating UI
+        // DM user with transcript + rating
         if (ticket?.creatorId) {
           try {
             const creator = await client.users.fetch(ticket.creatorId);
@@ -179,15 +170,15 @@ export default {
               new ButtonBuilder()
                 .setCustomId(`ticket_rate_5_${channel.id}`)
                 .setLabel('5 ⭐')
-                .setStyle(ButtonStyle.Success),
+                .setStyle(ButtonStyle.Success)
             );
 
             const rateEmbed = new EmbedBuilder()
               .setTitle('🎫 Ticket Experience')
               .setDescription(
                 `Your ticket **${channel.name}** has been closed.\n` +
-                'Please rate your experience for this ticket.\n' +
-                'Choose a rating from **1 (Poor)** to **5 (Excellent)** below.',
+                  'Please rate your experience for this ticket.\n' +
+                  'Choose a rating from **1 (Poor)** to **5 (Excellent)** below.'
               )
               .setColor('#FF0000')
               .setFooter({ text: 'ZeakCloud Support System' });
@@ -227,7 +218,7 @@ export default {
       // ---------- TICKET RATING BUTTONS ----------
       if (customId.startsWith('ticket_rate_')) {
         // customId format: ticket_rate_<score>_<channelId>
-        const parts = customId.split('_'); // ['ticket', 'rate', '<score>', '<channelId>']
+        const parts = customId.split('_');
         const score = parseInt(parts[2], 10);
         const ticketChannelId = parts[3];
 
@@ -247,7 +238,6 @@ export default {
           });
         }
 
-        // Only ticket creator can rate
         if (interaction.user.id !== ticket.creatorId) {
           return interaction.reply({
             content: 'Only the ticket creator can rate this ticket.',
@@ -255,7 +245,6 @@ export default {
           });
         }
 
-        // Prevent multiple ratings
         if (ticket.rating !== null) {
           return interaction.reply({
             content: `You already rated this ticket **${ticket.rating}/5**. Thanks!`,
@@ -273,8 +262,8 @@ export default {
             .setTitle('Ticket reviewed')
             .setDescription(
               `Ticket channel ID: \`${ticket.channelId}\`\n` +
-              `User: <@${ticket.creatorId}> (${ticket.creatorId})\n` +
-              `Rating: **${score}/5**`,
+                `User: <@${ticket.creatorId}> (${ticket.creatorId})\n` +
+                `Rating: **${score}/5**`
             )
             .setColor('#00FF00')
             .setTimestamp()
@@ -349,7 +338,9 @@ export default {
         }
       }
 
-      const ticketName = `${categoryType}-${user.username}-${user.discriminator || user.id.slice(-4)}`;
+      const ticketName = `${categoryType}-${user.username}-${
+        user.discriminator || user.id.slice(-4)
+      }`;
 
       try {
         const channel = await guild.channels.create({
@@ -405,8 +396,8 @@ export default {
           .setTitle(`Ticket created - ${categoryName}`)
           .setDescription(
             `**Reason:** ${reason}\n\n` +
-            `Hello ${user}, thanks for opening a ticket.\n` +
-            `A staff member <@&${config.STAFF_ROLE_ID}> will be with you shortly.`,
+              `Hello ${user}, thanks for opening a ticket.\n` +
+              `A staff member <@&${config.STAFF_ROLE_ID}> will be with you shortly.`
           )
           .setThumbnail(guild.iconURL())
           .setColor('#00FF00')
@@ -420,7 +411,7 @@ export default {
           new ButtonBuilder()
             .setCustomId('ticket_close')
             .setLabel('Close')
-            .setStyle(ButtonStyle.Danger),
+            .setStyle(ButtonStyle.Danger)
         );
 
         await channel.send({
@@ -436,9 +427,9 @@ export default {
             .setTitle('Ticket created')
             .setDescription(
               `Ticket: ${channel}\n` +
-              `User: ${user} (${user.id})\n` +
-              `Category: ${categoryType}\n` +
-              `Reason: ${reason}`,
+                `User: ${user} (${user.id})\n` +
+                `Category: ${categoryType}\n` +
+                `Reason: ${reason}`
             )
             .setColor('#00FF00')
             .setTimestamp()
