@@ -2,11 +2,10 @@
 import mongoose from 'mongoose';
 
 const ticketSchema = new mongoose.Schema({
-  // This exists because your Mongo collection already has a unique index: ticketId_1
-  // We mirror channelId into ticketId so that index never sees `null`.
+  // existing unique index in DB: ticketId_1
   ticketId: {
     type: String,
-    unique: true, // matches existing index ticketId_1
+    unique: true,
   },
 
   channelId: {
@@ -36,6 +35,12 @@ const ticketSchema = new mongoose.Schema({
     required: true,
   },
 
+  // ✅ NEW: store reason typed in modal
+  reason: {
+    type: String,
+    default: null,
+  },
+
   createdAt: {
     type: Date,
     default: Date.now,
@@ -47,7 +52,7 @@ const ticketSchema = new mongoose.Schema({
   },
 });
 
-// Before saving, ensure ticketId is set = channelId
+// before saving, mirror channelId -> ticketId if missing
 ticketSchema.pre('save', function (next) {
   if (!this.ticketId && this.channelId) {
     this.ticketId = this.channelId;
