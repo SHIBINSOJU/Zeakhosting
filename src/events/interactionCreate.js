@@ -37,17 +37,15 @@ export default {
         let placeholder =
           'Example: My server is offline / I need help with billing / etc.';
 
-        // Special text for PARTNERSHIP tickets
+        // Special text for PARTNERSHIP tickets (kept under 100 chars)
         if (categoryType === 'partnership') {
-          label = 'Provide your partnership details';
+          label = 'Partnership details';
           placeholder =
             'Community link:\n' +
-            'Discord: https://discord.gg/yourserver\n\n' +
+            'https://discord.gg/yourserver\n\n' +
             'Community type:\n' +
-            '(e.g. Minecraft hosting, survival SMP, gaming, tech, etc.)\n\n' +
-            'Member stats:\n' +
-            'Total members:\n' +
-            'Average online:\n';
+            'Minecraft / Hosting / Other\n\n' +
+            'Members: total + avg online';
         }
 
         const reasonInput = new TextInputBuilder()
@@ -67,13 +65,19 @@ export default {
       // ---------- CLAIM TICKET BUTTON ----------
       if (customId === 'ticket_claim') {
         if (!member?.roles.cache.has(config.STAFF_ROLE_ID)) {
-          return interaction.reply({ content: 'Only staff can claim tickets.', ephemeral: true });
+          return interaction.reply({
+            content: 'Only staff can claim tickets.',
+            ephemeral: true,
+          });
         }
 
         const ticket = await Ticket.findOne({ channelId: channel.id });
 
         if (!ticket) {
-          return interaction.reply({ content: 'Ticket data not found in database.', ephemeral: true });
+          return interaction.reply({
+            content: 'Ticket data not found in database.',
+            ephemeral: true,
+          });
         }
 
         if (ticket.claimedBy) {
@@ -99,7 +103,10 @@ export default {
       // ---------- CLOSE TICKET BUTTON ----------
       if (customId === 'ticket_close') {
         if (!member?.roles.cache.has(config.STAFF_ROLE_ID)) {
-          return interaction.reply({ content: 'Only staff can close tickets.', ephemeral: true });
+          return interaction.reply({
+            content: 'Only staff can close tickets.',
+            ephemeral: true,
+          });
         }
 
         await interaction.deferReply({ ephemeral: true });
@@ -124,7 +131,7 @@ export default {
 
         const attachment = new AttachmentBuilder(
           Buffer.from(transcriptText, 'utf-8'),
-          { name: `transcript-${channel.name}.txt` }
+          { name: `transcript-${channel.name}.txt` },
         );
 
         // Log to log channel
@@ -138,7 +145,7 @@ export default {
               `Creator: <@${ticket?.creatorId}>\n` +
               `Closer: ${user}\n` +
               `Category: ${ticket?.category}\n` +
-              `Reason: ${ticket?.reason || 'Not provided'}`
+              `Reason: ${ticket?.reason || 'Not provided'}`,
             )
             .setColor('#FF0000')
             .setTimestamp()
@@ -180,7 +187,7 @@ export default {
               .setDescription(
                 `Your ticket **${channel.name}** has been closed.\n` +
                 'Please rate your experience for this ticket.\n' +
-                'Choose a rating from **1 (Poor)** to **5 (Excellent)** below.'
+                'Choose a rating from **1 (Poor)** to **5 (Excellent)** below.',
               )
               .setColor('#FF0000')
               .setFooter({ text: 'ZeakCloud Support System' });
@@ -267,7 +274,7 @@ export default {
             .setDescription(
               `Ticket channel ID: \`${ticket.channelId}\`\n` +
               `User: <@${ticket.creatorId}> (${ticket.creatorId})\n` +
-              `Rating: **${score}/5**`
+              `Rating: **${score}/5**`,
             )
             .setColor('#00FF00')
             .setTimestamp()
@@ -297,11 +304,20 @@ export default {
 
       let categoryId;
       switch (categoryType) {
-        case 'support': categoryId = config.TICKET_CATEGORY_SUPPORT_ID; break;
-        case 'technical': categoryId = config.TICKET_CATEGORY_TECHNICAL_ID; break;
-        case 'partnership': categoryId = config.TICKET_CATEGORY_PARTNERSHIP_ID; break;
-        case 'other': categoryId = config.TICKET_CATEGORY_OTHER_ID; break;
-        default: return;
+        case 'support':
+          categoryId = config.TICKET_CATEGORY_SUPPORT_ID;
+          break;
+        case 'technical':
+          categoryId = config.TICKET_CATEGORY_TECHNICAL_ID;
+          break;
+        case 'partnership':
+          categoryId = config.TICKET_CATEGORY_PARTNERSHIP_ID;
+          break;
+        case 'other':
+          categoryId = config.TICKET_CATEGORY_OTHER_ID;
+          break;
+        default:
+          return;
       }
 
       if (!categoryId) {
@@ -390,7 +406,7 @@ export default {
           .setDescription(
             `**Reason:** ${reason}\n\n` +
             `Hello ${user}, thanks for opening a ticket.\n` +
-            `A staff member <@&${config.STAFF_ROLE_ID}> will be with you shortly.`
+            `A staff member <@&${config.STAFF_ROLE_ID}> will be with you shortly.`,
           )
           .setThumbnail(guild.iconURL())
           .setColor('#00FF00')
@@ -422,7 +438,7 @@ export default {
               `Ticket: ${channel}\n` +
               `User: ${user} (${user.id})\n` +
               `Category: ${categoryType}\n` +
-              `Reason: ${reason}`
+              `Reason: ${reason}`,
             )
             .setColor('#00FF00')
             .setTimestamp()
@@ -435,7 +451,6 @@ export default {
           content: `Ticket created: ${channel}`,
           ephemeral: true,
         });
-
       } catch (error) {
         console.error('Error while creating ticket with modal:', error);
         return interaction.reply({
