@@ -7,6 +7,9 @@ import {
   ChannelType,
   PermissionFlagsBits,
   AttachmentBuilder,
+  ModalBuilder,
+  TextInputBuilder,
+  TextInputStyle,
 } from 'discord.js';
 import config from '../utils/config.js';
 import Ticket from '../models/Ticket.js';
@@ -14,17 +17,167 @@ import Ticket from '../models/Ticket.js';
 export default {
   name: Events.InteractionCreate,
   async execute(interaction, client) {
-    if (!interaction.isButton()) return;
+    // =========================
+    // BUTTON INTERACTIONS
+    // =========================
+    if (interaction.isButton()) {
+      const { customId, guild, user, member } = interaction;
 
-    const { customId, guild, user, member } = interaction;
+      // ---------- CREATE TICKET BUTTONS ----------
+      if (customId.startsWith('create_ticket_')) {
+        const categoryType = customId.replace('create_ticket_', '');
+
+        // Show modal to ask for reason
+        const modal = new ModalBuilder()
+          .setCustomId(`ticket_modal_${categoryType}`)
+          .setTitle('Create a ticket');
+
+        const reasonInput = new TextInputBuilder()
+          .setCustomId('ticket_reason')
+          .setLabel('Describe your issue')
+          .setStyle(TextInputStyle.Paragraph)
+          .setRequired(true)
+          .setMaxLength(1000)
+          .setPlaceholder('Example: My server is offline / I need help with billing / etc.');
+
+        const row = new ActionRowBuilder().addComponents(reasonInput);
+        modal.addComponents(row);
+
+        return interaction.showModal(modal);
+      }
+
+      // ---------- CLAIM TICKET BUTTON ----------
+      if (customId === 'ticket_claim') {
+        const { member, channelId, user } = interaction;
+
+        if (!member.roles.cache.has(config.STAFF_ROLE_ID)) {
+          return interaction.reply({ content: 'Only staff can claim tickets.', ephemeral: true });
+        }
+
+        const ticket = await Ticket.findOne({ channelId });
+
+        if (!ticket) {
+          return interaction.reply({ content: 'Ticket data not found in database.', ephemeral: true });
+        }
+
+        if (ticket.claimedBy) {
+          return interaction.reply({
+            content: `Ticket already claimed by <@${ticket.claimedBy}>.`,
+            ephemeral: true,
+          });
+        }
+
+        ticket.claimedBy = user.id;
+        await ticket.save();
+
+        const embed = new EmbedBuilder()
+          .setDescription(`✅ Ticket claimed by ${user}`)
+          .setColor('#FFFF00')
+          .setFooter({ text: '© ShotDevs' });
+
+        await interaction.channel.send({ embeds: [embed] });
+
+        return interaction.reply({ content: 'You claimed this ticket.', ephemeral: true });
+      }
+
+      // ---------- CLOSE TICKET BUTTON ----------
+      if (customId === 'ticket_close') {
+        const { member, channel, user } = interaction;
+
+        if (!member.roles.cache.has(config.STAFF_ROLE_ID)) {
+          return interaction.reply({ content: 'Only staff can close tickets.', ephemeral: true });
+        }
+
+        await interaction.deferReply({ ephemeral: true });
+
+        const ticket = await Ticket.findOne({ channelId: channel.id });
+
+        let transcriptText = `TRANSCRIPT for ${channel.name}\n`;
+        transcriptText += `Category: ${ticket ? ticket.category : 'Unknown'}\n`;
+        transcriptText += `Reason: ${ticket?.reason || 'Not provided'}\n`;
+        transcriptText += `Closed by: ${user.tag} (${user.id})\n`;
+        transcriptText += `Date: ${new Date().toISOString()}\n\n`;
+
+        const messages = await channel.messages.fetch({ limit: 100 });
+        const sortedMessages = messages.reverse();
+
+        sortedMessages.forEach(msg => {
+          transcriptText += `[${msg.createdAt.toISOString()}] ${msg.author.tag}: ${msg.content}\n`;
+          if (msg.attachments.size > 0) {
+            transcriptText += `[Attachments]: ${msg.attachments.map(a => a.url).join(', ')}\n`;
+          }
+        });
+
+        const attachment = new AttachmentBuilder(
+          Buffer.from(transcriptText, 'utf-8'),
+          { name: `transcript-${channel.name}.txt` }
+        );
+
+        const logChannel = client.channels.cache.get(config.TICKET_LOG_CHANNEL_ID);
+
+        if (logChannel) {
+          const logEmbed = new EmbedBuilder()
+            .setTitle('Ticket closed')
+            .setDescription(
+              `Ticket: ${channel.name}\n` +
+              `Creator: <@${ticket?.creatorId}>\n` +
+              `Closer: ${user}\n` +
+              `Category: ${ticket?.category}\n` +
+              `Reason: ${ticket?.reason || 'Not provided'}`
+            )
+            .setColor('#FF0000')
+            .setTimestamp()
+            .setFooter({ text: '© ShotDevs' });
+
+          await logChannel.send({ embeds: [logEmbed], files: [attachment] });
+        }
+
+        if (ticket?.creatorId) {
+          try {
+            const creator = await client.users.fetch(ticket.creatorId);
+            await creator.send({
+              content: `Your ticket ${channel.name} has been closed.\nReason: ${ticket?.reason || 'Not provided'}`,
+              files: [attachment],
+            });
+          } catch {
+            console.warn('Could not DM ticket creator.');
+          }
+        }
+
+        if (ticket) {
+          ticket.closed = true;
+          await ticket.save();
+        }
+
+        if (ticket?.creatorId) {
+          await channel.permissionOverwrites.edit(ticket.creatorId, {
+            SendMessages: false,
+          });
+        }
+
+        await interaction.editReply({
+          content: '✅ Ticket closed. Channel will be deleted in 5 seconds.',
+        });
+
+        setTimeout(() => {
+          channel.delete().catch(console.error);
+        }, 5000);
+      }
+
+      return;
+    }
 
     // =========================
-    // CREATE TICKET HANDLER
+    // MODAL SUBMITS (REASON)
     // =========================
-    if (customId.startsWith('create_ticket_')) {
-      const categoryType = customId.replace('create_ticket_', '');
+    if (interaction.isModalSubmit()) {
+      const { customId, guild, user } = interaction;
+
+      if (!customId.startsWith('ticket_modal_')) return;
+
+      const categoryType = customId.replace('ticket_modal_', '');
+
       let categoryId;
-
       switch (categoryType) {
         case 'support': categoryId = config.TICKET_CATEGORY_SUPPORT_ID; break;
         case 'technical': categoryId = config.TICKET_CATEGORY_TECHNICAL_ID; break;
@@ -34,7 +187,32 @@ export default {
       }
 
       if (!categoryId) {
-        return interaction.reply({ content: 'Configuration error: Ticket category not found.', ephemeral: true });
+        return interaction.reply({
+          content: 'Configuration error: Ticket category not found.',
+          ephemeral: true,
+        });
+      }
+
+      const reason = interaction.fields.getTextInputValue('ticket_reason');
+
+      // ✅ Limit: one open ticket per user
+      const existingTicket = await Ticket.findOne({
+        guildId: guild.id,
+        creatorId: user.id,
+        closed: false,
+      });
+
+      if (existingTicket) {
+        const existingChannel = guild.channels.cache.get(existingTicket.channelId);
+        if (existingChannel) {
+          return interaction.reply({
+            content: `You already have an open ticket: ${existingChannel}`,
+            ephemeral: true,
+          });
+        } else {
+          existingTicket.closed = true;
+          await existingTicket.save();
+        }
       }
 
       const ticketName = `${categoryType}-${user.username}-${user.discriminator || user.id.slice(-4)}`;
@@ -81,14 +259,20 @@ export default {
           guildId: guild.id,
           creatorId: user.id,
           category: categoryType,
+          reason,
         });
 
         await newTicket.save();
 
+        const categoryName =
+          categoryType.charAt(0).toUpperCase() + categoryType.slice(1);
+
         const embed = new EmbedBuilder()
-          .setTitle(`Ticket created - ${categoryType.charAt(0).toUpperCase() + categoryType.slice(1)}`)
+          .setTitle(`Ticket created - ${categoryName}`)
           .setDescription(
-            `Hello ${user}, thanks for opening a ticket.\nA staff member <@&${config.STAFF_ROLE_ID}> will be with you shortly.`
+            `**Reason:** ${reason}\n\n` +
+            `Hello ${user}, thanks for opening a ticket.\n` +
+            `A staff member <@&${config.STAFF_ROLE_ID}> will be with you shortly.`
           )
           .setThumbnail(guild.iconURL())
           .setColor('#00FF00')
@@ -102,7 +286,7 @@ export default {
           new ButtonBuilder()
             .setCustomId('ticket_close')
             .setLabel('Close')
-            .setStyle(ButtonStyle.Danger)
+            .setStyle(ButtonStyle.Danger),
         );
 
         await channel.send({
@@ -111,126 +295,36 @@ export default {
           components: [row],
         });
 
-        return interaction.reply({ content: `Ticket created: ${channel}`, ephemeral: true });
+        // Log ticket creation with reason
+        const logChannel = client.channels.cache.get(config.TICKET_LOG_CHANNEL_ID);
+        if (logChannel) {
+          const logEmbed = new EmbedBuilder()
+            .setTitle('Ticket created')
+            .setDescription(
+              `Ticket: ${channel}\n` +
+              `User: ${user} (${user.id})\n` +
+              `Category: ${categoryType}\n` +
+              `Reason: ${reason}`
+            )
+            .setColor('#00FF00')
+            .setTimestamp()
+            .setFooter({ text: '© ShotDevs' });
+
+          await logChannel.send({ embeds: [logEmbed] });
+        }
+
+        return interaction.reply({
+          content: `Ticket created: ${channel}`,
+          ephemeral: true,
+        });
 
       } catch (error) {
-        console.error('Error while creating ticket:', error);
+        console.error('Error while creating ticket with modal:', error);
         return interaction.reply({
-          content: 'Ticket channel was created but failed to save in database.',
+          content: 'Failed to create ticket. Please contact staff.',
           ephemeral: true,
         });
       }
-    }
-
-    // =========================
-    // CLAIM TICKET HANDLER
-    // =========================
-    if (customId === 'ticket_claim') {
-      if (!member.roles.cache.has(config.STAFF_ROLE_ID)) {
-        return interaction.reply({ content: 'Only staff can claim tickets.', ephemeral: true });
-      }
-
-      const ticket = await Ticket.findOne({ channelId: interaction.channelId });
-
-      if (!ticket) {
-        return interaction.reply({ content: 'Ticket data not found in database.', ephemeral: true });
-      }
-
-      if (ticket.claimedBy) {
-        return interaction.reply({ content: `Ticket already claimed by <@${ticket.claimedBy}>.`, ephemeral: true });
-      }
-
-      ticket.claimedBy = user.id;
-      await ticket.save();
-
-      const embed = new EmbedBuilder()
-        .setDescription(`✅ Ticket claimed by ${user}`)
-        .setColor('#FFFF00')
-        .setFooter({ text: '© ShotDevs' });
-
-      await interaction.channel.send({ embeds: [embed] });
-
-      return interaction.reply({ content: 'You claimed this ticket.', ephemeral: true });
-    }
-
-    // =========================
-    // CLOSE TICKET HANDLER (FIXED ✅)
-    // =========================
-    if (customId === 'ticket_close') {
-      if (!member.roles.cache.has(config.STAFF_ROLE_ID)) {
-        return interaction.reply({ content: 'Only staff can close tickets.', ephemeral: true });
-      }
-
-      // ✅ Acknowledge immediately so Discord doesn't show "interaction failed"
-      await interaction.deferReply({ ephemeral: true });
-
-      const ticket = await Ticket.findOne({ channelId: interaction.channelId });
-
-      let transcriptText = `TRANSCRIPT for ${interaction.channel.name}\n`;
-      transcriptText += `Category: ${ticket ? ticket.category : 'Unknown'}\n`;
-      transcriptText += `Closed by: ${user.tag} (${user.id})\n`;
-      transcriptText += `Date: ${new Date().toISOString()}\n\n`;
-
-      const messages = await interaction.channel.messages.fetch({ limit: 100 });
-      const sortedMessages = messages.reverse();
-
-      sortedMessages.forEach(msg => {
-        transcriptText += `[${msg.createdAt.toISOString()}] ${msg.author.tag}: ${msg.content}\n`;
-        if (msg.attachments.size > 0) {
-          transcriptText += `[Attachments]: ${msg.attachments.map(a => a.url).join(', ')}\n`;
-        }
-      });
-
-      const attachment = new AttachmentBuilder(
-        Buffer.from(transcriptText, 'utf-8'),
-        { name: `transcript-${interaction.channel.name}.txt` }
-      );
-
-      const logChannel = client.channels.cache.get(config.TICKET_LOG_CHANNEL_ID);
-
-      if (logChannel) {
-        const logEmbed = new EmbedBuilder()
-          .setTitle('Ticket closed')
-          .setDescription(
-            `Ticket: ${interaction.channel.name}\nCreator: <@${ticket?.creatorId}>\nCloser: ${user}\nCategory: ${ticket?.category}`
-          )
-          .setColor('#FF0000')
-          .setTimestamp()
-          .setFooter({ text: '© ShotDevs' });
-
-        await logChannel.send({ embeds: [logEmbed], files: [attachment] });
-      }
-
-      if (ticket?.creatorId) {
-        try {
-          const creator = await client.users.fetch(ticket.creatorId);
-          await creator.send({
-            content: `Your ticket ${interaction.channel.name} has been closed.`,
-            files: [attachment],
-          });
-        } catch {
-          console.warn('Could not DM ticket creator.');
-        }
-      }
-
-      if (ticket) {
-        ticket.closed = true;
-        await ticket.save();
-      }
-
-      if (ticket?.creatorId) {
-        await interaction.channel.permissionOverwrites.edit(ticket.creatorId, {
-          SendMessages: false,
-        });
-      }
-
-      await interaction.editReply({
-        content: '✅ Ticket closed. Channel will be deleted in 5 seconds.',
-      });
-
-      setTimeout(() => {
-        interaction.channel.delete().catch(console.error);
-      }, 5000);
     }
   },
 };
