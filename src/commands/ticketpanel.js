@@ -14,15 +14,18 @@ export default {
     }
 
     const embed = new EmbedBuilder()
-      .setTitle('Create a ticket')
-      .setDescription(config.TICKET_DESCRIPTION)
+      .setTitle('ZeakCloud - TicketSystem')
+      .setDescription(
+        'Need Help? Open a ticket by Selecting Categories below!\n' +
+        'We are ready to help you.'
+      )
       .setThumbnail(message.guild.iconURL())
-      .setColor('#0099ff')
+      .setColor('#FF0000')
       .addFields(
         { name: '🆘 Support', value: 'Click for general support.', inline: true },
         { name: '🛠️ Technical', value: 'Click for technical issues.', inline: true },
         { name: '🤝 Partnership', value: 'Click for partnership inquiries.', inline: true },
-        { name: '❓ Other', value: 'Click for other inquiries.', inline: true }
+        { name: '❓ Other', value: 'Click for other inquiries.', inline: true },
       )
       .setFooter({ text: '© ShotDevs' });
 
@@ -58,11 +61,10 @@ export default {
     }
 
     await channel.send({ embeds: [embed], components: [row] });
+
     if (channelId !== message.channel.id) {
       await message.reply(`Ticket panel sent to <#${channelId}>.`);
     } else {
-      // If sent in the same channel, maybe delete the command message?
-      // The prompt doesn't specify, but it's cleaner.
       try { await message.delete(); } catch (e) {}
     }
   },
