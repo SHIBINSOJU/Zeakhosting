@@ -33,6 +33,8 @@ const config = {
   // Welcome System 
   WELCOME_ENABLED: process.env.WELCOME_ENABLED === 'true',
   WELCOME_CHANNEL_ID: process.env.WELCOME_CHANNEL_ID,
+  WELCOME_BACKGROUND_URL: process.env.WELCOME_BACKGROUND_URL,
+  AUTO_ROLE_ID: process.env.AUTO_ROLE_ID,
 };
 
 export function validateConfig() {
