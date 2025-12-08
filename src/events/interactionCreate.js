@@ -9,7 +9,7 @@ import {
   ModalBuilder,
   TextInputBuilder,
   TextInputStyle,
-  // V2 Imports (Experimental/Custom Wrapper)
+  // V2 Imports
   ContainerBuilder,
   TextDisplayBuilder,
   SectionBuilder,
@@ -111,7 +111,6 @@ export default {
                                `---------------------------------------------------\n\n`;
 
           const messages = await channel.messages.fetch({ limit: 100 });
-          // Reverse messages to show oldest first in text file
           Array.from(messages.values()).reverse().forEach(msg => {
             const time = msg.createdAt.toISOString().split('T')[1].split('.')[0];
             transcriptText += `[${time}] ${msg.author.tag}: ${msg.content}\n`;
@@ -154,7 +153,6 @@ export default {
               try {
                   const creator = await client.users.fetch(ticket.creatorId);
                   
-                  // Rating Buttons
                   const ratingRow = new ActionRowBuilder().addComponents(
                       new ButtonBuilder().setCustomId(`ticket_rate_1_${channel.id}`).setLabel('1 ⭐').setStyle(ButtonStyle.Danger),
                       new ButtonBuilder().setCustomId(`ticket_rate_2_${channel.id}`).setLabel('2 ⭐').setStyle(ButtonStyle.Danger),
@@ -163,7 +161,6 @@ export default {
                       new ButtonBuilder().setCustomId(`ticket_rate_5_${channel.id}`).setLabel('5 ⭐').setStyle(ButtonStyle.Success)
                   );
 
-                  // Rating Container
                   const rateContainer = new ContainerBuilder()
                       .setAccentColor(0x3498db) // Blue
                       .addContent(
@@ -185,7 +182,6 @@ export default {
               }
           }
 
-          // 4. Update DB and Delete Channel
           if (ticket) { 
               ticket.closed = true; 
               await ticket.save(); 
@@ -206,19 +202,16 @@ export default {
 
           if (isNaN(score)) return interaction.reply({ content: 'Error parsing score.', ephemeral: true });
 
-          // Find ticket by original channel ID
           const ticket = await Ticket.findOne({ channelId: ticketChannelId });
           
           if (!ticket) return interaction.reply({ content: '❌ Ticket data not found.', ephemeral: true });
           if (interaction.user.id !== ticket.creatorId) return interaction.reply({ content: '❌ This is not your ticket.', ephemeral: true });
           if (ticket.rating !== null) return interaction.reply({ content: `⚠️ You already rated this ticket **${ticket.rating}/5**.`, ephemeral: true });
 
-          // Save Rating
           ticket.rating = score;
           ticket.ratedAt = new Date();
           await ticket.save();
 
-          // Log Rating (V2)
           const logChannel = client.channels.cache.get(config.TICKET_LOG_CHANNEL_ID);
           if (logChannel) {
             const ratingContainer = new ContainerBuilder()
@@ -236,7 +229,6 @@ export default {
             await logChannel.send({ components: [ratingContainer], flags: MessageFlags.IsComponentsV2 });
           }
 
-          // Disable buttons after voting
           const disabledRow = ActionRowBuilder.from(interaction.message.components[0]);
           disabledRow.components.forEach(btn => btn.setDisabled(true));
           
@@ -264,6 +256,11 @@ export default {
                 default: categoryId = config.TICKET_CATEGORY_OTHER_ID; break;
             }
 
+            // Fallback if category ID is not set in env (prevents crash)
+            if (!categoryId && config.TICKET_CATEGORY_ID) {
+                categoryId = config.TICKET_CATEGORY_ID;
+            }
+
             if (!categoryId) return interaction.reply({ content: '❌ Configuration Error: Category ID missing.', ephemeral: true });
 
             const reason = interaction.fields.getTextInputValue('ticket_reason');
@@ -277,17 +274,38 @@ export default {
             const ticketName = `${categoryType}-${user.username}`.substring(0, 32);
 
             try {
+                // --- SAFELY BUILD PERMISSIONS TO PREVENT CRASH ---
+                const permissionOverwrites = [
+                    { 
+                        id: guild.id, 
+                        deny: [PermissionFlagsBits.ViewChannel] 
+                    },
+                    { 
+                        id: user.id, 
+                        allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.AttachFiles] 
+                    },
+                    { 
+                        id: client.user.id, 
+                        allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages] 
+                    },
+                ];
+
+                // Only add staff role if the ID is valid
+                if (config.STAFF_ROLE_ID) {
+                    permissionOverwrites.push({
+                        id: config.STAFF_ROLE_ID,
+                        allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ManageMessages]
+                    });
+                } else {
+                    console.warn('[Ticket System] Warning: STAFF_ROLE_ID is missing in config/env. Staff will not see new tickets automatically.');
+                }
+
                 // Create Channel
                 const channel = await guild.channels.create({
                     name: ticketName,
                     type: ChannelType.GuildText,
                     parent: categoryId,
-                    permissionOverwrites: [
-                        { id: guild.id, deny: [PermissionFlagsBits.ViewChannel] },
-                        { id: user.id, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.AttachFiles] },
-                        { id: config.STAFF_ROLE_ID, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ManageMessages] },
-                        { id: client.user.id, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages] },
-                    ],
+                    permissionOverwrites: permissionOverwrites,
                 });
 
                 // Save to Database
@@ -306,36 +324,28 @@ export default {
                 const ticketContainer = new ContainerBuilder()
                     .setAccentColor(0x00FF99) // Mint/Teal
                     .addContent(
-                        // 1. Header with Icon
                         new SectionBuilder()
                             .addContent(new TextDisplayBuilder().setContent(`# 🎫 ${categoryDisplayName} Ticket`))
                             .setAccessory(new ThumbnailBuilder().setURL(guild.iconURL({ extension: 'png' }) || '')),
-
-                        // 2. Separator
                         new SeparatorBuilder().setDivider(true).setSpacing(SeparatorSpacingSize.Medium),
-
-                        // 3. Info Body
                         new TextDisplayBuilder().setContent(
                             `**User:** ${user}\n` +
                             `**Reason:**\n> ${reason}\n\n` +
                             `### ⚠️ Staff Notice\n` +
-                            `A member of the <@&${config.STAFF_ROLE_ID}> team will be here shortly.`
+                            `A member of the ${config.STAFF_ROLE_ID ? `<@&${config.STAFF_ROLE_ID}>` : 'Staff'} team will be here shortly.`
                         ),
-
-                        // 4. Footer
                         new TextDisplayBuilder()
                             .setContent('ZeakCloud Ticket System')
                             .setColor('subtext')
                     );
 
-                // Control Buttons
                 const controlRow = new ActionRowBuilder().addComponents(
                     new ButtonBuilder().setCustomId('ticket_claim').setLabel('Claim Ticket').setStyle(ButtonStyle.Success).setEmoji('🙋‍♂️'),
                     new ButtonBuilder().setCustomId('ticket_close').setLabel('Close Ticket').setStyle(ButtonStyle.Danger).setEmoji('🔒')
                 );
 
                 await channel.send({
-                    content: `${user} <@&${config.STAFF_ROLE_ID}>`, // Mentions outside container
+                    content: `${user} ${config.STAFF_ROLE_ID ? `<@&${config.STAFF_ROLE_ID}>` : ''}`,
                     components: [ticketContainer, controlRow], 
                     flags: MessageFlags.IsComponentsV2
                 });
@@ -361,14 +371,13 @@ export default {
 
             } catch (error) {
                 console.error('Ticket creation error:', error);
-                return interaction.reply({ content: '❌ Failed to create ticket channel. Please contact an admin.', ephemeral: true });
+                return interaction.reply({ content: '❌ Failed to create ticket channel. Please check bot permissions and category ID.', ephemeral: true });
             }
         }
       }
 
     } catch (err) {
       console.error('Global Interaction Error:', err);
-      // Try to reply if not already replied
       if (interaction.isRepliable() && !interaction.replied) {
           await interaction.reply({ content: 'An internal error occurred.', ephemeral: true }).catch(() => {});
       }
