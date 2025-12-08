@@ -59,7 +59,8 @@ export default {
         // B. CLAIM TICKET (Staff Only)
         // --------------------------------------------------
         if (customId === 'ticket_claim') {
-          if (!member?.roles.cache.has(config.STAFF_ROLE_ID)) {
+          // Safety check: Ensure staff role is configured before checking
+          if (config.STAFF_ROLE_ID && !member?.roles.cache.has(config.STAFF_ROLE_ID)) {
             return interaction.reply({ content: '❌ Only staff can claim tickets.', ephemeral: true });
           }
 
@@ -93,7 +94,7 @@ export default {
         // C. CLOSE TICKET (Staff Only)
         // --------------------------------------------------
         if (customId === 'ticket_close') {
-          if (!member?.roles.cache.has(config.STAFF_ROLE_ID)) {
+          if (config.STAFF_ROLE_ID && !member?.roles.cache.has(config.STAFF_ROLE_ID)) {
             return interaction.reply({ content: '❌ Only staff can close tickets.', ephemeral: true });
           }
 
@@ -247,7 +248,7 @@ export default {
         if (customId.startsWith('ticket_modal_')) {
             const categoryType = customId.replace('ticket_modal_', '');
             
-            // Map category ID from config
+            // 1. Resolve Category ID
             let categoryId;
             switch (categoryType) {
                 case 'support': categoryId = config.TICKET_CATEGORY_SUPPORT_ID; break;
@@ -256,12 +257,13 @@ export default {
                 default: categoryId = config.TICKET_CATEGORY_OTHER_ID; break;
             }
 
-            // Fallback if category ID is not set in env (prevents crash)
-            if (!categoryId && config.TICKET_CATEGORY_ID) {
-                categoryId = config.TICKET_CATEGORY_ID;
-            }
+            // Fallback to generic ID if specific one is missing
+            if (!categoryId) categoryId = config.TICKET_CATEGORY_ID;
 
-            if (!categoryId) return interaction.reply({ content: '❌ Configuration Error: Category ID missing.', ephemeral: true });
+            if (!categoryId) {
+                console.error('[Ticket System] ERROR: No valid category ID found in config!');
+                return interaction.reply({ content: '❌ Configuration Error: Contact Admin (Missing Category ID).', ephemeral: true });
+            }
 
             const reason = interaction.fields.getTextInputValue('ticket_reason');
 
@@ -274,8 +276,8 @@ export default {
             const ticketName = `${categoryType}-${user.username}`.substring(0, 32);
 
             try {
-                // --- SAFELY BUILD PERMISSIONS TO PREVENT CRASH ---
-                const permissionOverwrites = [
+                // --- ⚠️ CRITICAL FIX: SAFETY FILTER FOR PERMISSIONS ---
+                const rawOverwrites = [
                     { 
                         id: guild.id, 
                         deny: [PermissionFlagsBits.ViewChannel] 
@@ -288,24 +290,22 @@ export default {
                         id: client.user.id, 
                         allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages] 
                     },
+                    { 
+                        // Attempt to add Staff Role
+                        id: config.STAFF_ROLE_ID, 
+                        allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ManageMessages] 
+                    },
                 ];
 
-                // Only add staff role if the ID is valid
-                if (config.STAFF_ROLE_ID) {
-                    permissionOverwrites.push({
-                        id: config.STAFF_ROLE_ID,
-                        allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ManageMessages]
-                    });
-                } else {
-                    console.warn('[Ticket System] Warning: STAFF_ROLE_ID is missing in config/env. Staff will not see new tickets automatically.');
-                }
+                // Filter out any entries where 'id' is undefined or invalid string
+                const safeOverwrites = rawOverwrites.filter(o => typeof o.id === 'string' && o.id.length > 0);
 
                 // Create Channel
                 const channel = await guild.channels.create({
                     name: ticketName,
                     type: ChannelType.GuildText,
                     parent: categoryId,
-                    permissionOverwrites: permissionOverwrites,
+                    permissionOverwrites: safeOverwrites, // Use filtered list
                 });
 
                 // Save to Database
@@ -332,7 +332,7 @@ export default {
                             `**User:** ${user}\n` +
                             `**Reason:**\n> ${reason}\n\n` +
                             `### ⚠️ Staff Notice\n` +
-                            `A member of the ${config.STAFF_ROLE_ID ? `<@&${config.STAFF_ROLE_ID}>` : 'Staff'} team will be here shortly.`
+                            `A member of the staff team will be here shortly.`
                         ),
                         new TextDisplayBuilder()
                             .setContent('ZeakCloud Ticket System')
@@ -343,9 +343,14 @@ export default {
                     new ButtonBuilder().setCustomId('ticket_claim').setLabel('Claim Ticket').setStyle(ButtonStyle.Success).setEmoji('🙋‍♂️'),
                     new ButtonBuilder().setCustomId('ticket_close').setLabel('Close Ticket').setStyle(ButtonStyle.Danger).setEmoji('🔒')
                 );
+                
+                // Construct mention string safely
+                const mentionString = config.STAFF_ROLE_ID 
+                    ? `${user} <@&${config.STAFF_ROLE_ID}>` 
+                    : `${user}`;
 
                 await channel.send({
-                    content: `${user} ${config.STAFF_ROLE_ID ? `<@&${config.STAFF_ROLE_ID}>` : ''}`,
+                    content: mentionString,
                     components: [ticketContainer, controlRow], 
                     flags: MessageFlags.IsComponentsV2
                 });
