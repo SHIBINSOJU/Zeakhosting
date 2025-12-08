@@ -9,13 +9,7 @@ import {
   ModalBuilder,
   TextInputBuilder,
   TextInputStyle,
-  ContainerBuilder,
-  TextDisplayBuilder,
-  SectionBuilder,
-  ThumbnailBuilder,
-  SeparatorBuilder,
-  SeparatorSpacingSize,
-  MessageFlags 
+  EmbedBuilder
 } from 'discord.js';
 import config from '../utils/config.js';
 import Ticket from '../models/Ticket.js';
@@ -25,12 +19,12 @@ export default {
   async execute(interaction, client) {
     try {
       // ====================================================
-      // 1. BUTTON CLICKS
+      // 1. BUTTON INTERACTIONS
       // ====================================================
       if (interaction.isButton()) {
         const { customId, guild, user, member, channel } = interaction;
 
-        // --- A. OPEN MODAL (Do NOT defer here!) ---
+        // --- A. OPEN TICKET MODAL ---
         if (customId.startsWith('create_ticket_')) {
           const categoryType = customId.replace('create_ticket_', '');
 
@@ -49,153 +43,156 @@ export default {
           const row = new ActionRowBuilder().addComponents(reasonInput);
           modal.addComponents(row);
 
-          // DIRECTLY show modal. No deferReply allowed here.
           return interaction.showModal(modal);
         }
 
         // --- B. CLAIM TICKET ---
         if (customId === 'ticket_claim') {
-            // Safety: Check if Staff Role is valid before checking
-            const hasRole = config.STAFF_ROLE_ID && member.roles.cache.has(config.STAFF_ROLE_ID);
-            
-            // If checking role fails or user doesn't have it
-            if (config.STAFF_ROLE_ID && !hasRole) {
-                return interaction.reply({ content: '❌ Only staff can claim tickets.', ephemeral: true });
-            }
+          // Check staff role safely
+          if (config.STAFF_ROLE_ID && !member.roles.cache.has(config.STAFF_ROLE_ID)) {
+            return interaction.reply({ content: '❌ Only staff can claim tickets.', ephemeral: true });
+          }
 
-            const ticket = await Ticket.findOne({ channelId: channel.id });
-            if (!ticket) return interaction.reply({ content: '❌ Ticket not found in DB.', ephemeral: true });
-            if (ticket.claimedBy) return interaction.reply({ content: `❌ Already claimed by <@${ticket.claimedBy}>.`, ephemeral: true });
+          const ticket = await Ticket.findOne({ channelId: channel.id });
+          if (!ticket) return interaction.reply({ content: '❌ Ticket not found.', ephemeral: true });
+          if (ticket.claimedBy) return interaction.reply({ content: `❌ Already claimed by <@${ticket.claimedBy}>.`, ephemeral: true });
 
-            ticket.claimedBy = user.id;
-            await ticket.save();
+          ticket.claimedBy = user.id;
+          await ticket.save();
 
-            const claimContainer = new ContainerBuilder()
-                .setAccentColor(0xFFFF00)
-                .addContent(new TextDisplayBuilder().setContent(`✅ **Ticket claimed by** ${user}`));
+          const claimEmbed = new EmbedBuilder()
+            .setColor('#FFFF00')
+            .setDescription(`✅ **Ticket claimed by** ${user}`);
 
-            await channel.send({ components: [claimContainer], flags: MessageFlags.IsComponentsV2 });
-            return interaction.reply({ content: 'Claimed successfully.', ephemeral: true });
+          await channel.send({ embeds: [claimEmbed] });
+          return interaction.reply({ content: 'You claimed this ticket.', ephemeral: true });
         }
 
         // --- C. CLOSE TICKET ---
         if (customId === 'ticket_close') {
-            const hasRole = config.STAFF_ROLE_ID && member.roles.cache.has(config.STAFF_ROLE_ID);
-            if (config.STAFF_ROLE_ID && !hasRole) {
-                return interaction.reply({ content: '❌ Only staff can close tickets.', ephemeral: true });
-            }
+          if (config.STAFF_ROLE_ID && !member.roles.cache.has(config.STAFF_ROLE_ID)) {
+            return interaction.reply({ content: '❌ Only staff can close tickets.', ephemeral: true });
+          }
 
-            // We CAN defer here because we are not showing a modal
-            await interaction.deferReply({ ephemeral: true });
+          await interaction.deferReply({ ephemeral: true });
 
-            const ticket = await Ticket.findOne({ channelId: channel.id });
+          const ticket = await Ticket.findOne({ channelId: channel.id });
+
+          // Generate Transcript
+          let transcriptText = `TRANSCRIPT for ${channel.name}\n` +
+                               `Closed by: ${user.tag}\n` +
+                               `Date: ${new Date().toLocaleString()}\n\n`;
+
+          const messages = await channel.messages.fetch({ limit: 100 });
+          Array.from(messages.values()).reverse().forEach(msg => {
+            transcriptText += `[${msg.createdAt.toLocaleString()}] ${msg.author.tag}: ${msg.content}\n`;
+          });
+
+          const attachment = new AttachmentBuilder(Buffer.from(transcriptText), { name: `transcript-${channel.name}.txt` });
+
+          // Log to Log Channel
+          const logChannel = client.channels.cache.get(config.TICKET_LOG_CHANNEL_ID);
+          if (logChannel) {
+            const logEmbed = new EmbedBuilder()
+              .setTitle('📕 Ticket Closed')
+              .setColor('#FF0000')
+              .addFields(
+                { name: 'Ticket', value: `${channel.name}`, inline: true },
+                { name: 'Closer', value: `${user}`, inline: true },
+                { name: 'Creator', value: `<@${ticket?.creatorId}>`, inline: true }
+              );
             
-            // Generate Transcript
-            let transcriptText = `TRANSCRIPT: ${channel.name}\nClosed by: ${user.tag}\n\n`;
-            const messages = await channel.messages.fetch({ limit: 100 });
-            Array.from(messages.values()).reverse().forEach(msg => {
-                transcriptText += `[${msg.createdAt.toLocaleString()}] ${msg.author.tag}: ${msg.content}\n`;
-            });
+            await logChannel.send({ embeds: [logEmbed], files: [attachment] }).catch(() => {});
+          }
 
-            const attachment = new AttachmentBuilder(Buffer.from(transcriptText), { name: `transcript-${channel.name}.txt` });
-
-            // Log to Channel
-            const logChannel = client.channels.cache.get(config.TICKET_LOG_CHANNEL_ID);
-            if (logChannel) {
-                try {
-                    await logChannel.send({ 
-                        content: `Ticket Closed: ${channel.name}`,
-                        files: [attachment] 
-                    });
-                } catch (e) { console.error('Log error:', e); }
-            }
-
-            // Delete Channel
-            if (ticket) { ticket.closed = true; await ticket.save(); }
-            await interaction.editReply({ content: '✅ Ticket closed. Deleting...' });
-            setTimeout(() => channel.delete().catch(() => {}), 5000);
-            return;
+          // Mark Closed & Delete
+          if (ticket) { ticket.closed = true; await ticket.save(); }
+          
+          await interaction.editReply({ content: '✅ Ticket closed. Deleting in 5 seconds...' });
+          setTimeout(() => channel.delete().catch(() => {}), 5000);
+          return;
         }
       }
 
       // ====================================================
-      // 2. MODAL SUBMIT (Create the actual channel)
+      // 2. MODAL SUBMIT (CREATE TICKET)
       // ====================================================
       if (interaction.isModalSubmit() && interaction.customId.startsWith('ticket_modal_')) {
-        const categoryType = interaction.customId.replace('ticket_modal_', '');
+        const { customId, guild, user } = interaction;
+        const categoryType = customId.replace('ticket_modal_', '');
         const reason = interaction.fields.getTextInputValue('ticket_reason');
 
-        // RESOLVE CATEGORY ID
+        // 1. Resolve Category ID (with fallback)
         let categoryId = config.TICKET_CATEGORY_OTHER_ID;
         if (categoryType === 'support') categoryId = config.TICKET_CATEGORY_SUPPORT_ID;
         if (categoryType === 'technical') categoryId = config.TICKET_CATEGORY_TECHNICAL_ID;
         if (categoryType === 'partnership') categoryId = config.TICKET_CATEGORY_PARTNERSHIP_ID;
         
-        // Fallback
-        if (!categoryId) categoryId = config.TICKET_CATEGORY_ID;
+        if (!categoryId) categoryId = config.TICKET_CATEGORY_ID; // Ultimate fallback
+
+        // 2. Prepare Permissions (Safety Filter)
+        const rawOverwrites = [
+          { id: guild.id, deny: [PermissionFlagsBits.ViewChannel] },
+          { id: user.id, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.AttachFiles] },
+          { id: client.user.id, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages] },
+          { id: config.STAFF_ROLE_ID, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages] }
+        ];
+
+        // Filter out undefined IDs to prevent crash
+        const safeOverwrites = rawOverwrites.filter(o => o.id && typeof o.id === 'string');
 
         try {
-            // --- THE CRASH FIX IS HERE ---
-            // We create a list of permissions, then FILTER out the broken ones.
-            const rawOverwrites = [
-                { id: guild.id, deny: [PermissionFlagsBits.ViewChannel] },
-                { id: user.id, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages] },
-                { id: client.user.id, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages] },
-                // Only tries to add staff if the ID exists
-                { id: config.STAFF_ROLE_ID, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages] }
-            ];
+          // 3. Create Channel
+          const channel = await guild.channels.create({
+            name: `${categoryType}-${user.username}`.substring(0, 32),
+            type: ChannelType.GuildText,
+            parent: categoryId,
+            permissionOverwrites: safeOverwrites,
+          });
 
-            // This line removes any "undefined" IDs so the bot won't crash
-            const safeOverwrites = rawOverwrites.filter(o => o.id && typeof o.id === 'string');
+          // 4. Save to DB
+          await new Ticket({
+            channelId: channel.id,
+            guildId: guild.id,
+            creatorId: user.id,
+            category: categoryType,
+            reason,
+          }).save();
 
-            const channel = await guild.channels.create({
-                name: `${categoryType}-${user.username}`.substring(0, 32),
-                type: ChannelType.GuildText,
-                parent: categoryId,
-                permissionOverwrites: safeOverwrites, 
-            });
+          // 5. Send Interface (Standard Embed)
+          const dashboardEmbed = new EmbedBuilder()
+            .setTitle(`${categoryType.toUpperCase()} TICKET`)
+            .setDescription(
+              `**User:** ${user}\n` +
+              `**Reason:**\n\`\`\`\n${reason}\n\`\`\`\n` +
+              `**Staff Notice:**\nPlease wait for <@&${config.STAFF_ROLE_ID || 'Staff'}> to respond.`
+            )
+            .setThumbnail(user.displayAvatarURL())
+            .setColor('#00FF99')
+            .setTimestamp();
 
-            // Save DB
-            await new Ticket({
-                channelId: channel.id,
-                guildId: guild.id,
-                creatorId: user.id,
-                category: categoryType,
-                reason,
-            }).save();
+          const row = new ActionRowBuilder().addComponents(
+            new ButtonBuilder().setCustomId('ticket_claim').setLabel('Claim Ticket').setStyle(ButtonStyle.Success).setEmoji('🙋‍♂️'),
+            new ButtonBuilder().setCustomId('ticket_close').setLabel('Close Ticket').setStyle(ButtonStyle.Danger).setEmoji('🔒')
+          );
 
-            // Send Dashboard
-            const ticketContainer = new ContainerBuilder()
-                .setAccentColor(0x00FF99)
-                .addContent(
-                    new TextDisplayBuilder().setContent(`**Ticket Created**\nUser: ${user}\nReason: ${reason}`)
-                );
+          await channel.send({
+            content: `${user} ${config.STAFF_ROLE_ID ? `<@&${config.STAFF_ROLE_ID}>` : ''}`,
+            embeds: [dashboardEmbed],
+            components: [row]
+          });
 
-            const row = new ActionRowBuilder().addComponents(
-                new ButtonBuilder().setCustomId('ticket_claim').setLabel('Claim').setStyle(ButtonStyle.Success),
-                new ButtonBuilder().setCustomId('ticket_close').setLabel('Close').setStyle(ButtonStyle.Danger)
-            );
-
-            await channel.send({ 
-                content: `${user} ${config.STAFF_ROLE_ID ? `<@&${config.STAFF_ROLE_ID}>` : ''}`, 
-                components: [ticketContainer, row], 
-                flags: MessageFlags.IsComponentsV2 
-            });
-
-            return interaction.reply({ content: `✅ Ticket created: ${channel}`, ephemeral: true });
+          return interaction.reply({ content: `✅ Ticket created: ${channel}`, ephemeral: true });
 
         } catch (error) {
-            console.error('Ticket Create Error:', error);
-            return interaction.reply({ content: '❌ Failed to create channel. Check Bot Permissions.', ephemeral: true });
+          console.error('Ticket Create Error:', error);
+          return interaction.reply({ content: '❌ Failed to create ticket. Check bot permissions.', ephemeral: true });
         }
       }
 
     } catch (err) {
       console.error('Global Error:', err);
-      // Prevent crash if reply fails
-      try { 
-          if (!interaction.replied) await interaction.reply({ content: 'Error.', ephemeral: true });
-      } catch (e) {}
+      try { if (!interaction.replied) await interaction.reply({ content: 'An internal error occurred.', ephemeral: true }); } catch (e) {}
     }
   },
 };
