@@ -4,42 +4,57 @@ import {
     ActionRowBuilder, 
     ButtonStyle, 
     ComponentType,
-    AttachmentBuilder
+    AttachmentBuilder,
+    SlashCommandBuilder
 } from 'discord.js';
 import { status } from 'minecraft-server-util';
 
 export default {
-    name: 'mcstatus',
-    description: 'Displays Minecraft server status and player list.',
-    
-    // This structure assumes you are using Slash Commands (interaction)
-    // If you are using prefix commands (message), some adjustments to input parsing are needed.
+    // We use SlashCommandBuilder so the "ip" box appears in Discord
+    data: new SlashCommandBuilder()
+        .setName('mcstatus')
+        .setDescription('Displays Minecraft server status and player list')
+        .addStringOption(option => 
+            option.setName('ip')
+                .setDescription('The Minecraft Server IP (e.g., in2.kymc.xyz:30407)')
+                .setRequired(true)
+        ),
+
     async execute(interaction, client) {
         
-        // 1. Get the IP from arguments. (Change 'ip' to whatever your option name is)
-        // If using prefix commands: const ip = args[0];
-        const ip = interaction.options.getString('ip'); 
-        if (!ip) return interaction.reply({ content: 'Please provide a server IP!', ephemeral: true });
+        // 1. Get the raw input (e.g., "in2.kymc.xyz:30407")
+        const rawInput = interaction.options.getString('ip'); 
+        
+        // 2. LOGIC: Split the IP and Port
+        // If the user types "ip:port", we split it. If just "ip", we use port 25565.
+        let host, port;
+        const parts = rawInput.split(':');
 
-        // Acknowledge the command immediately so the bot doesn't timeout while fetching
+        if (parts.length === 2) {
+            host = parts[0];              // "in2.kymc.xyz"
+            port = parseInt(parts[1]);    // 30407
+        } else {
+            host = rawInput;              // "play.hypixel.net"
+            port = 25565;                 // Default Java Port
+        }
+
         await interaction.deferReply();
 
         try {
-            // 2. Fetch Server Status (Standard Java/Geyser Query)
-            // Default port is 25565. This works for Geyser if querying the Java port.
-            const result = await status(ip);
+            // 3. Fetch Status with the specific PORT
+            const result = await status(host, port);
 
-            // 3. Create the Favicon (Server Icon)
+            // 4. Create Favicon
             let iconAttachment = null;
             if (result.favicon) {
                 const buffer = Buffer.from(result.favicon.split(',')[1], 'base64');
                 iconAttachment = new AttachmentBuilder(buffer, { name: 'icon.png' });
             }
 
-            // 4. Build the Status Embed
+            // 5. Build Embed
             const statusEmbed = new EmbedBuilder()
                 .setColor('#2F3136')
-                .setTitle(`${ip} Status`)
+                .setTitle(`${host}:${port} Status`) // Shows full address in title
                 .setDescription(result.motd.clean || 'No MOTD')
                 .addFields(
                     { name: '🟢 Status', value: 'Online', inline: true },
@@ -53,7 +68,7 @@ export default {
                 statusEmbed.setThumbnail('attachment://icon.png');
             }
 
-            // 5. Create the "Playerlist" Button
+            // 6. Create Button
             const playerButton = new ButtonBuilder()
                 .setCustomId('get_playerlist')
                 .setLabel('Show Playerlist')
@@ -62,15 +77,13 @@ export default {
 
             const row = new ActionRowBuilder().addComponents(playerButton);
 
-            // 6. Send the initial message
             const response = await interaction.editReply({
                 embeds: [statusEmbed],
                 components: [row],
                 files: iconAttachment ? [iconAttachment] : []
             });
 
-            // 7. Create a Collector to handle button clicks
-            // This allows the button to work for 15 minutes (900000ms)
+            // 7. Collector for Button
             const collector = response.createMessageComponentCollector({ 
                 componentType: ComponentType.Button, 
                 time: 900000 
@@ -78,21 +91,15 @@ export default {
 
             collector.on('collect', async (i) => {
                 if (i.customId === 'get_playerlist') {
-                    
-                    // Logic for the Ephemeral Player List
                     let playerDescription = 'No players online.';
                     
-                    // Check if sample players exist
                     if (result.players.sample && result.players.sample.length > 0) {
-                        // Map the names from the sample data
                         playerDescription = result.players.sample.map(p => `• **${p.name}**`).join('\n');
-                        
-                        // Note: Standard query only returns a "sample" (usually 12 players).
                         if (result.players.online > result.players.sample.length) {
                             playerDescription += `\n\n*...and ${result.players.online - result.players.sample.length} more.*`;
                         }
                     } else if (result.players.online > 0) {
-                        playerDescription = 'Players are online, but the server is hiding their names (Query disabled).';
+                        playerDescription = 'Players are online, but the server is hiding their names.';
                     }
 
                     const playerEmbed = new EmbedBuilder()
@@ -100,20 +107,8 @@ export default {
                         .setTitle(`Online Players (${result.players.online})`)
                         .setDescription(playerDescription);
 
-                    // Send the private (ephemeral) message
-                    await i.reply({ 
-                        embeds: [playerEmbed], 
-                        ephemeral: true 
-                    });
+                    await i.reply({ embeds: [playerEmbed], ephemeral: true });
                 }
-            });
-
-            collector.on('end', () => {
-                // Optional: Disable the button after time runs out
-                const disabledRow = new ActionRowBuilder().addComponents(
-                    playerButton.setDisabled(true).setLabel('Expired')
-                );
-                interaction.editReply({ components: [disabledRow] }).catch(() => {});
             });
 
         } catch (error) {
@@ -121,10 +116,10 @@ export default {
             const errorEmbed = new EmbedBuilder()
                 .setColor('#FF0000')
                 .setTitle('🔴 Server Offline')
-                .setDescription(`Could not connect to **${ip}**.\nThe server might be offline or the IP is incorrect.`);
+                .setDescription(`Could not connect to **${host}:${port}**.\nCheck if the server is offline or the IP is wrong.`);
             
             await interaction.editReply({ embeds: [errorEmbed] });
         }
     }
 };
-                      
+                
