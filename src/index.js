@@ -1,13 +1,19 @@
-import { Client, GatewayIntentBits, Collection, Partials } from 'discord.js';
+import { Client, GatewayIntentBits, Collection, Partials, ActivityType } from 'discord.js';
 import config, { validateConfig } from './utils/config.js';
 import { connectDB } from './utils/db.js';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { status } from 'minecraft-server-util'; // Import this for the bot status
 
 // Setup __dirname for ES modules
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+// --- CONFIGURATION FOR STATUS ---
+const SERVER_IP_FOR_STATUS = 'play.zeakmc.net'; // CHANGE THIS to your server IP
+const SERVER_PORT = 25565; // Default Java port
+// --------------------------------
 
 if (!validateConfig()) {
   console.error('Bot configuration is invalid. Exiting...');
@@ -25,15 +31,13 @@ const client = new Client({
 });
 
 client.commands = new Collection();
-const commandsToDeploy = []; // Array to hold command data for deployment
+const commandsToDeploy = [];
 
 // Load Commands
 const commandsPath = path.join(__dirname, 'commands');
 if (fs.existsSync(commandsPath)) {
   const commandFiles = fs.readdirSync(commandsPath).filter(file => file.endsWith('.js'));
   
-  // We need to wait for all commands to load before starting the bot
-  // so we wrap this in an async function immediately
   (async () => {
     for (const file of commandFiles) {
       const filePath = path.join(commandsPath, file);
@@ -41,22 +45,14 @@ if (fs.existsSync(commandsPath)) {
         const module = await import(filePath);
         const command = module.default;
 
-        // Support both "SlashCommandBuilder" (data) and simple objects (name)
         if ('data' in command && 'execute' in command) {
           client.commands.set(command.data.name, command);
           commandsToDeploy.push(command.data.toJSON());
           console.log(`[CMD] Loaded Slash Command: ${command.data.name}`);
-        } 
-        else if ('name' in command && 'execute' in command) {
+        } else if ('name' in command && 'execute' in command) {
           client.commands.set(command.name, command);
-          // If it's a simple command, we create a basic slash definition
-          commandsToDeploy.push({ 
-            name: command.name, 
-            description: command.description || 'No description provided.' 
-          });
+          commandsToDeploy.push({ name: command.name, description: 'No description.' });
           console.log(`[CMD] Loaded Simple Command: ${command.name}`);
-        } else {
-          console.warn(`[WARNING] The command at ${filePath} is missing "data" or "name".`);
         }
       } catch (err) {
         console.error(`[ERROR] Failed to load command ${file}:`, err);
@@ -78,29 +74,43 @@ if (fs.existsSync(eventsPath)) {
       } else {
         client.on(event.name, (...args) => event.execute(...args, client));
       }
-      console.log(`[EVENT] Loaded event: ${event.name}`);
     }).catch(err => console.error(`[ERROR] Failed to load event ${file}:`, err));
   }
 }
 
-// Auto-Deploy Commands when the bot is ready
 client.once('ready', async () => {
     console.log(`Logged in as ${client.user.tag}!`);
     
-    // Only deploy if we actually loaded commands
+    // 1. AUTO-DEPLOY COMMANDS
     if (commandsToDeploy.length > 0) {
         try {
-            console.log(`[DEPLOY] Started refreshing ${commandsToDeploy.length} application (/) commands.`);
-            
-            // This deploys to ALL servers (Global). 
-            // Note: Global updates can take up to 1 hour to cache, but usually instant for dev bots.
+            console.log(`[DEPLOY] Refreshing ${commandsToDeploy.length} commands...`);
             await client.application.commands.set(commandsToDeploy);
-            
-            console.log('[DEPLOY] Successfully reloaded application (/) commands.');
+            console.log('[DEPLOY] Commands registered globaly.');
         } catch (error) {
             console.error('[DEPLOY ERROR]', error);
         }
     }
+
+    // 2. LIVE BOT STATUS LOOP
+    const updateStatus = async () => {
+        try {
+            // Fetch server info
+            const result = await status(SERVER_IP_FOR_STATUS, SERVER_PORT);
+            const playerCount = result.players.online;
+            const maxPlayers = result.players.max;
+
+            // Set Activity: "Playing with 77/100 players"
+            client.user.setActivity(`with ${playerCount}/${maxPlayers} players`, { type: ActivityType.Playing });
+        } catch (error) {
+            console.warn(`[STATUS] Could not fetch ${SERVER_IP_FOR_STATUS}`);
+            client.user.setActivity('Server Offline', { type: ActivityType.Watching });
+        }
+    };
+
+    // Run immediately, then every 60 seconds
+    updateStatus();
+    setInterval(updateStatus, 60000); 
 });
 
 // Start
