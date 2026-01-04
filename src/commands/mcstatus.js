@@ -10,41 +10,39 @@ import {
 import { status } from 'minecraft-server-util';
 
 export default {
-    // We use SlashCommandBuilder so the "ip" box appears in Discord
+    // THIS 'data' PART CREATES THE IP BOX IN DISCORD
     data: new SlashCommandBuilder()
         .setName('mcstatus')
-        .setDescription('Displays Minecraft server status and player list')
+        .setDescription('Check the status of a Minecraft Server')
         .addStringOption(option => 
             option.setName('ip')
-                .setDescription('The Minecraft Server IP (e.g., in2.kymc.xyz:30407)')
+                .setDescription('The Server IP (e.g., play.hypixel.net)')
                 .setRequired(true)
         ),
 
     async execute(interaction, client) {
-        
-        // 1. Get the raw input (e.g., "in2.kymc.xyz:30407")
+        // 1. Get the IP the user typed
         const rawInput = interaction.options.getString('ip'); 
         
-        // 2. LOGIC: Split the IP and Port
-        // If the user types "ip:port", we split it. If just "ip", we use port 25565.
+        // 2. Split IP and Port (Handles "ip:port" or just "ip")
         let host, port;
         const parts = rawInput.split(':');
 
         if (parts.length === 2) {
-            host = parts[0];              // "in2.kymc.xyz"
-            port = parseInt(parts[1]);    // 30407
+            host = parts[0];
+            port = parseInt(parts[1]);
         } else {
-            host = rawInput;              // "play.hypixel.net"
-            port = 25565;                 // Default Java Port
+            host = rawInput;
+            port = 25565; // Default Java Port
         }
 
         await interaction.deferReply();
 
         try {
-            // 3. Fetch Status with the specific PORT
+            // 3. Fetch Status
             const result = await status(host, port);
 
-            // 4. Create Favicon
+            // 4. Create Icon
             let iconAttachment = null;
             if (result.favicon) {
                 const buffer = Buffer.from(result.favicon.split(',')[1], 'base64');
@@ -54,7 +52,7 @@ export default {
             // 5. Build Embed
             const statusEmbed = new EmbedBuilder()
                 .setColor('#2F3136')
-                .setTitle(`${host}:${port} Status`) // Shows full address in title
+                .setTitle(`${host}:${port} Status`)
                 .setDescription(result.motd.clean || 'No MOTD')
                 .addFields(
                     { name: '🟢 Status', value: 'Online', inline: true },
@@ -83,7 +81,7 @@ export default {
                 files: iconAttachment ? [iconAttachment] : []
             });
 
-            // 7. Collector for Button
+            // 7. Handle Button Clicks
             const collector = response.createMessageComponentCollector({ 
                 componentType: ComponentType.Button, 
                 time: 900000 
@@ -122,4 +120,3 @@ export default {
         }
     }
 };
-                
