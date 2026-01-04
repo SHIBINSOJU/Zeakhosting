@@ -5,12 +5,12 @@ import {
     ButtonStyle, 
     ComponentType,
     AttachmentBuilder,
-    SlashCommandBuilder
+    SlashCommandBuilder // Required for the IP input box
 } from 'discord.js';
 import { status } from 'minecraft-server-util';
 
 export default {
-    // THIS 'data' PART CREATES THE IP BOX IN DISCORD
+    // THIS 'data' SECTION IS WHAT ADDS THE INPUT BOX
     data: new SlashCommandBuilder()
         .setName('mcstatus')
         .setDescription('Check the status of a Minecraft Server')
@@ -24,7 +24,7 @@ export default {
         // 1. Get the IP the user typed
         const rawInput = interaction.options.getString('ip'); 
         
-        // 2. Split IP and Port (Handles "ip:port" or just "ip")
+        // 2. Logic to handle Ports (IP:Port)
         let host, port;
         const parts = rawInput.split(':');
 
@@ -120,3 +120,4 @@ export default {
         }
     }
 };
+
