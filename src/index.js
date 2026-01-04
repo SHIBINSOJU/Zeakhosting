@@ -25,23 +25,44 @@ const client = new Client({
 });
 
 client.commands = new Collection();
+const commandsToDeploy = []; // Array to hold command data for deployment
 
 // Load Commands
 const commandsPath = path.join(__dirname, 'commands');
 if (fs.existsSync(commandsPath)) {
   const commandFiles = fs.readdirSync(commandsPath).filter(file => file.endsWith('.js'));
-  for (const file of commandFiles) {
-    const filePath = path.join(commandsPath, file);
-    import(filePath).then(module => {
-      const command = module.default;
-      if ('name' in command && 'execute' in command) {
-        client.commands.set(command.name, command);
-        console.log(`[CMD] Loaded command: ${command.name}`);
-      } else {
-        console.warn(`[WARNING] The command at ${filePath} is missing a required "name" or "execute" property.`);
+  
+  // We need to wait for all commands to load before starting the bot
+  // so we wrap this in an async function immediately
+  (async () => {
+    for (const file of commandFiles) {
+      const filePath = path.join(commandsPath, file);
+      try {
+        const module = await import(filePath);
+        const command = module.default;
+
+        // Support both "SlashCommandBuilder" (data) and simple objects (name)
+        if ('data' in command && 'execute' in command) {
+          client.commands.set(command.data.name, command);
+          commandsToDeploy.push(command.data.toJSON());
+          console.log(`[CMD] Loaded Slash Command: ${command.data.name}`);
+        } 
+        else if ('name' in command && 'execute' in command) {
+          client.commands.set(command.name, command);
+          // If it's a simple command, we create a basic slash definition
+          commandsToDeploy.push({ 
+            name: command.name, 
+            description: command.description || 'No description provided.' 
+          });
+          console.log(`[CMD] Loaded Simple Command: ${command.name}`);
+        } else {
+          console.warn(`[WARNING] The command at ${filePath} is missing "data" or "name".`);
+        }
+      } catch (err) {
+        console.error(`[ERROR] Failed to load command ${file}:`, err);
       }
-    }).catch(err => console.error(`[ERROR] Failed to load command ${file}:`, err));
-  }
+    }
+  })();
 }
 
 // Load Events
@@ -61,6 +82,26 @@ if (fs.existsSync(eventsPath)) {
     }).catch(err => console.error(`[ERROR] Failed to load event ${file}:`, err));
   }
 }
+
+// Auto-Deploy Commands when the bot is ready
+client.once('ready', async () => {
+    console.log(`Logged in as ${client.user.tag}!`);
+    
+    // Only deploy if we actually loaded commands
+    if (commandsToDeploy.length > 0) {
+        try {
+            console.log(`[DEPLOY] Started refreshing ${commandsToDeploy.length} application (/) commands.`);
+            
+            // This deploys to ALL servers (Global). 
+            // Note: Global updates can take up to 1 hour to cache, but usually instant for dev bots.
+            await client.application.commands.set(commandsToDeploy);
+            
+            console.log('[DEPLOY] Successfully reloaded application (/) commands.');
+        } catch (error) {
+            console.error('[DEPLOY ERROR]', error);
+        }
+    }
+});
 
 // Start
 (async () => {
