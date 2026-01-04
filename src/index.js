@@ -1,19 +1,19 @@
 import { Client, GatewayIntentBits, Collection, Partials, ActivityType } from 'discord.js';
-import config, { validateConfig } from './utils/config.js';
+import config, { validateConfig } from './utils/config.js'; // Assumes utils is in src/utils
 import { connectDB } from './utils/db.js';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { status } from 'minecraft-server-util'; // Import this for the bot status
+import { status } from 'minecraft-server-util';
 
-// Setup __dirname for ES modules
+// 1. Setup Path for SRC folder
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// --- CONFIGURATION FOR STATUS ---
-const SERVER_IP_FOR_STATUS = 'play.zeakmc.net'; // CHANGE THIS to your server IP
-const SERVER_PORT = 25565; // Default Java port
-// --------------------------------
+// --- CONFIGURATION ---
+const SERVER_IP = 'in2.kymc.xyz'; 
+const SERVER_PORT = 30407;
+// ---------------------
 
 if (!validateConfig()) {
   console.error('Bot configuration is invalid. Exiting...');
@@ -33,8 +33,10 @@ const client = new Client({
 client.commands = new Collection();
 const commandsToDeploy = [];
 
-// Load Commands
+// 2. Load Commands from 'src/commands'
+// Since this file is in 'src', pointing to './commands' works perfectly.
 const commandsPath = path.join(__dirname, 'commands');
+
 if (fs.existsSync(commandsPath)) {
   const commandFiles = fs.readdirSync(commandsPath).filter(file => file.endsWith('.js'));
   
@@ -45,11 +47,13 @@ if (fs.existsSync(commandsPath)) {
         const module = await import(filePath);
         const command = module.default;
 
+        // Check for SlashCommandBuilder (data) or Basic Command (name)
         if ('data' in command && 'execute' in command) {
           client.commands.set(command.data.name, command);
           commandsToDeploy.push(command.data.toJSON());
           console.log(`[CMD] Loaded Slash Command: ${command.data.name}`);
-        } else if ('name' in command && 'execute' in command) {
+        } 
+        else if ('name' in command && 'execute' in command) {
           client.commands.set(command.name, command);
           commandsToDeploy.push({ name: command.name, description: 'No description.' });
           console.log(`[CMD] Loaded Simple Command: ${command.name}`);
@@ -61,7 +65,7 @@ if (fs.existsSync(commandsPath)) {
   })();
 }
 
-// Load Events
+// 3. Load Events from 'src/events'
 const eventsPath = path.join(__dirname, 'events');
 if (fs.existsSync(eventsPath)) {
   const eventFiles = fs.readdirSync(eventsPath).filter(file => file.endsWith('.js'));
@@ -81,40 +85,32 @@ if (fs.existsSync(eventsPath)) {
 client.once('ready', async () => {
     console.log(`Logged in as ${client.user.tag}!`);
     
-    // 1. AUTO-DEPLOY COMMANDS
+    // 4. Force Register Commands (Fixes the "No Input Box" issue)
     if (commandsToDeploy.length > 0) {
         try {
             console.log(`[DEPLOY] Refreshing ${commandsToDeploy.length} commands...`);
             await client.application.commands.set(commandsToDeploy);
-            console.log('[DEPLOY] Commands registered globaly.');
+            console.log('[DEPLOY] Successfully registered commands!');
         } catch (error) {
             console.error('[DEPLOY ERROR]', error);
         }
     }
 
-    // 2. LIVE BOT STATUS LOOP
+    // 5. Live Status Loop
     const updateStatus = async () => {
         try {
-            // Fetch server info
-            const result = await status(SERVER_IP_FOR_STATUS, SERVER_PORT);
-            const playerCount = result.players.online;
-            const maxPlayers = result.players.max;
-
-            // Set Activity: "Playing with 77/100 players"
-            client.user.setActivity(`with ${playerCount}/${maxPlayers} players`, { type: ActivityType.Playing });
+            const result = await status(SERVER_IP, SERVER_PORT);
+            client.user.setActivity(`with ${result.players.online}/${result.players.max} players`, { type: ActivityType.Playing });
         } catch (error) {
-            console.warn(`[STATUS] Could not fetch ${SERVER_IP_FOR_STATUS}`);
             client.user.setActivity('Server Offline', { type: ActivityType.Watching });
         }
     };
-
-    // Run immediately, then every 60 seconds
     updateStatus();
     setInterval(updateStatus, 60000); 
 });
 
-// Start
 (async () => {
   await connectDB();
   await client.login(config.DISCORD_TOKEN);
 })();
+
