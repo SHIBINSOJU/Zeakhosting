@@ -1,12 +1,11 @@
 import { Client, GatewayIntentBits, Collection, Partials, ActivityType } from 'discord.js';
-import config, { validateConfig } from './utils/config.js'; // Assumes utils is in src/utils
+import config, { validateConfig } from './utils/config.js';
 import { connectDB } from './utils/db.js';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { status } from 'minecraft-server-util';
 
-// 1. Setup Path for SRC folder
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -33,10 +32,8 @@ const client = new Client({
 client.commands = new Collection();
 const commandsToDeploy = [];
 
-// 2. Load Commands from 'src/commands'
-// Since this file is in 'src', pointing to './commands' works perfectly.
+// 1. Load Commands
 const commandsPath = path.join(__dirname, 'commands');
-
 if (fs.existsSync(commandsPath)) {
   const commandFiles = fs.readdirSync(commandsPath).filter(file => file.endsWith('.js'));
   
@@ -47,7 +44,6 @@ if (fs.existsSync(commandsPath)) {
         const module = await import(filePath);
         const command = module.default;
 
-        // Check for SlashCommandBuilder (data) or Basic Command (name)
         if ('data' in command && 'execute' in command) {
           client.commands.set(command.data.name, command);
           commandsToDeploy.push(command.data.toJSON());
@@ -65,7 +61,7 @@ if (fs.existsSync(commandsPath)) {
   })();
 }
 
-// 3. Load Events from 'src/events'
+// 2. Load Events (Optional now, since we handle interactions below)
 const eventsPath = path.join(__dirname, 'events');
 if (fs.existsSync(eventsPath)) {
   const eventFiles = fs.readdirSync(eventsPath).filter(file => file.endsWith('.js'));
@@ -82,21 +78,51 @@ if (fs.existsSync(eventsPath)) {
   }
 }
 
+// ============================================================
+// 3. THIS IS THE MISSING PIECE: The Command Handler
+// ============================================================
+client.on('interactionCreate', async interaction => {
+    // We only care about Chat Commands (Slash Commands)
+    if (!interaction.isChatInputCommand()) return;
+
+    const command = client.commands.get(interaction.commandName);
+
+    if (!command) {
+        console.error(`No command matching ${interaction.commandName} was found.`);
+        return;
+    }
+
+    try {
+        // Execute the command code
+        await command.execute(interaction, client);
+    } catch (error) {
+        console.error(`Error executing ${interaction.commandName}`);
+        console.error(error);
+        if (interaction.replied || interaction.deferred) {
+            await interaction.followUp({ content: 'There was an error executing this command!', ephemeral: true });
+        } else {
+            await interaction.reply({ content: 'There was an error executing this command!', ephemeral: true });
+        }
+    }
+});
+// ============================================================
+
+
 client.once('ready', async () => {
     console.log(`Logged in as ${client.user.tag}!`);
     
-    // 4. Force Register Commands (Fixes the "No Input Box" issue)
+    // 4. Auto-Deploy Commands
     if (commandsToDeploy.length > 0) {
         try {
             console.log(`[DEPLOY] Refreshing ${commandsToDeploy.length} commands...`);
             await client.application.commands.set(commandsToDeploy);
-            console.log('[DEPLOY] Successfully registered commands!');
+            console.log('[DEPLOY] Commands registered!');
         } catch (error) {
             console.error('[DEPLOY ERROR]', error);
         }
     }
 
-    // 5. Live Status Loop
+    // 5. Status Loop
     const updateStatus = async () => {
         try {
             const result = await status(SERVER_IP, SERVER_PORT);
